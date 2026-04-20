@@ -3,15 +3,31 @@ name = "gentest"
 version = "0.0.1"
 description = "Générateur de fichier tests"
 authors = [
-    {name = "Thierry HUET",email = "thierry.huet@aperto-nota.fr"}
+    {name = "Thierry HUET", email = "thierry.huet@aperto-nota.fr"}
 ]
 license = {text = "Apache-2.0"}
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
+    "streamlit>=1.35.0",
+    "pandas>=2.2.0",
+    "numpy>=1.26.0",
+    "scipy>=1.13.0",
+    "openpyxl>=3.1.0",
+    "pyarrow>=16.0.0",
+    "rstr>=3.2.0",
+    "watchdog (>=6.0.0,<7.0.0)",
 ]
 
+[project.scripts]
+gentest = "gentest.app:run_app"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
+
+[tool.poetry]
+packages = [{include = "gentest", from = "src"}]
+
+[tool.poetry.group.dev.dependencies]
+pytest = ">=8.0.0"

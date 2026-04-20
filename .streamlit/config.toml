@@ -1,0 +1,9 @@
+[server]
+# Static serving désactivé — Bootstrap retiré, aucun asset statique requis
+
+[theme]
+primaryColor = "#006699"
+backgroundColor = "#f5f9fc"
+secondaryBackgroundColor = "#e8f4f8"
+textColor = "#1a1a2e"
+font = "sans serif"

@@ -1,10 +1,12 @@
 services:
-  synthetic-testset:
+  gentest:
     build: .
     ports:
       - "8501:8501"
     volumes:
-      - ./:/app
+      - ./src:/app/src
+      - ./static:/app/static
+      - ./.streamlit:/app/.streamlit
     environment:
       - STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
-
+      - PYTHONPATH=/app/src
