@@ -1,6 +1,6 @@
 [project]
 name = "gentest"
-version = "0.0.1"
+version = "1.0.0"
 description = "Générateur de fichier tests"
 authors = [
     {name = "Thierry HUET", email = "thierry.huet@aperto-nota.fr"}
