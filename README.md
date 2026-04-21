@@ -1,4 +1,4 @@
-# Midara v1.0.1
+# Midara v1.1.0
 ### Générateur de jeu de test statistiquement conforme
 
 Midara fait partie du **Projet Anonyx**, dédié à la protection et à la maîtrise des données.
@@ -16,15 +16,21 @@ Midara fait partie du **Projet Anonyx**, dédié à la protection et à la maît
 - Inférence automatique du type de colonne avec heuristiques :
   - **Identifiants** (MMSI, codes, index…) → traitement texte, rééchantillonnage propre sans `.0`
   - **Années** (construction, fabrication…) → traitement catégoriel, valeurs entières restituées
+  - **Dates catégorielles** → normalisation des clés `value_counts` via `str(k.date())`
 - Génération synthétique :
-  - Numérique : KDE + clip sur [min, max], tolérance ±5 % (configurable)
-  - Catégoriel / booléen : distribution observée, divergence Jensen-Shannon ≤ 0,05
-  - Texte : rééchantillonnage ou pattern regex (conformité ≥ 95 %)
+  - Numérique : KDE + clip sur [min, max], tolérance ±5 % (configurable)
+  - Catégoriel / booléen : distribution observée, divergence Jensen-Shannon ≤ 0,05
+  - Texte : rééchantillonnage ou pattern regex (conformité ≥ 95 %)
   - Datetime : interpolation uniforme sur [min, max]
-- Contraintes de corrélation inter-colonnes (Pearson / Spearman, |r| > 0,7), copule gaussienne
-- Vue par colonne : profil original + résultat synthétique + regex dans un seul expander
-- Rapport de conformité détaillé avec motif KO concis par colonne
-- Export multi-formats (CSV, XLSX, Parquet) + rapport HTML
+- Contraintes de corrélation inter-colonnes (Pearson / Spearman, |r| > 0,7), copule gaussienne
+- Interface en 6 blocs séquentiels :
+  - ① Vue par colonne : accordéon titre fixe + détail colonne par colonne
+  - ② Corrélations sensibles
+  - ③ Génération
+  - ④ Qualité du jeu de test : score, 4 métriques, colonnes KO, heatmap corrélations
+  - ⑤ Rapport détaillé : conformité colonne par colonne (expander)
+  - ⑥ Export
+- Export multi-formats (CSV, XLSX, Parquet) + rapport HTML téléchargeable
 
 ---
 
@@ -34,7 +40,7 @@ Midara fait partie du **Projet Anonyx**, dédié à la protection et à la maît
 |---|---|
 | Langage | Python ≥ 3.14 |
 | Gestion des dépendances | Poetry |
-| Interface utilisateur | Streamlit (CSS personnalisé, sans dépendance externe) |
+| Interface utilisateur | Streamlit (CSS personnalisé, palette `#006699`) |
 | Conteneurisation | Docker + docker-compose |
 
 ---
@@ -53,7 +59,7 @@ make run
 docker compose up --build
 ```
 
-Accès : http://localhost:8501
+Accès : http://localhost:8501
 
 ---
 
@@ -61,10 +67,10 @@ Accès : http://localhost:8501
 
 | Paramètre | Valeur par défaut | Configurable |
 |---|---|---|
-| Tolérance statistiques numériques | ±5 % | Oui |
-| Seuil divergence JS (catégoriel) | ≤ 0,05 | Oui |
-| Taux conformité regex (texte) | ≥ 95 % | Oui |
-| Seuil corrélation sensible | \|r\| > 0,7 | Non |
+| Tolérance statistiques numériques | ±5 % | Oui (1 %–20 %) |
+| Seuil divergence JS (catégoriel) | ≤ 0,05 | Oui (0,01–0,20) |
+| Taux conformité regex (texte) | ≥ 95 % | Oui (50 %–100 %) |
+| Seuil corrélation sensible | \|r\| > 0,7 | Non |
 
 ---
 
@@ -85,6 +91,7 @@ gentest/
 │   │       ├── components.py   # CSS + composants réutilisables
 │   │       └── layout.py       # Mise en page Streamlit
 │   └── static/
+│       ├── logo_anonyx_gen.png
 │       └── Logo_complet.png
 ├── .streamlit/
 │   └── config.toml
@@ -92,20 +99,37 @@ gentest/
 ├── Makefile
 ├── Dockerfile
 ├── docker-compose.yml
+├── exigences.md
 └── VERSION
 ```
 
 ---
 
-## 6. Limites
+## 6. Changelog
+
+### v1.1.0
+- Nouveau bloc **④ Qualité du jeu de test** : 4 métriques, tableau KO, heatmap corrélations
+- Bloc ① restructuré : titre `section_header` hors accordéon, expander `Détail des colonnes`
+- Bloc ⑤ Rapport détaillé et ⑥ Export (renumérotation)
+- Logo sidebar rendu sur fond blanc avec coins arrondis
+- Correction normalisation clés `value_counts` pour colonnes catégorielles contenant des `Timestamp`
+- Nettoyage : suppression du code mort (`COLOR_ACCENT`, `card()`, `Optional`, `_warnings.py`)
+- Optimisation : heuristiques de typage calculées une seule fois par colonne
+
+### v1.0.1
+- Version initiale publique
+
+---
+
+## 7. Limites
 
 - Les corrélations sont préservées uniquement pour les paires validées par l'utilisateur
 - Les regex trop restrictives peuvent réduire la diversité des données générées
-- La divergence Jensen-Shannon est calculée sur les distributions discrétisées ; les colonnes à très haute cardinalité peuvent nécessiter un ajustement manuel
+- La divergence Jensen-Shannon est calculée sur les distributions discrétisées ; les colonnes à très haute cardinalité peuvent nécessiter un ajustement manuel
 - Python 3.14 est en version RC — si l'image `python:3.14-slim` n'est pas disponible sur Docker Hub, utiliser temporairement `3.13-slim`
 
 ---
 
-## 7. Licence
+## 8. Licence
 
 Apache-2.0 — © Aperto Nota · https://aperto-nota.fr
