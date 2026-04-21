@@ -1,30 +1,30 @@
-# Générateur de jeu de test statistiquement conforme (Streamlit + Docker)
+# Anonyx·Gen v1.0.1
+### Générateur de jeu de test statistiquement conforme
 
-Application conteneurisée permettant de :
-- Charger un fichier tabulaire en entrée (xlsx, csv, parquet)
-- Calculer des statistiques par colonne
-- Générer un jeu de test synthétique qui préserve :
-  - Noms et ordre des colonnes
-  - Un nombre de lignes significatif (paramétrable)
-  - Des statistiques par colonne proches de celles du jeu d'origine (tolérance ±5 % par défaut, configurable)
-  - Des corrélations inter-colonnes sensibles validées par l'utilisateur (seuil |r| > 0,7)
-  - Des contraintes de format texte via regex (conformité ≥ 95 % par défaut)
-- Produire un rapport de conformité et exporter le jeu généré
+Anonyx·Gen fait partie de la suite **Anonyx**, dédiée à la protection et à la maîtrise des données.
+
+| Produit | Rôle |
+|---|---|
+| **Anonyx·Gen** | Génération de jeux de test synthétiques (ce module) |
+| **Anonyx·Mask** | Pseudonymisation de données _(à venir)_ |
 
 ---
 
 ## 1. Fonctionnalités
 
-- Lecture de fichiers : CSV, XLSX, Parquet
-- Inférence automatique du type de colonne
+- Chargement de fichiers : CSV (détection automatique du séparateur), XLSX, Parquet
+- Inférence automatique du type de colonne avec heuristiques :
+  - **Identifiants** (MMSI, codes, index…) → traitement texte, rééchantillonnage propre sans `.0`
+  - **Années** (construction, fabrication…) → traitement catégoriel, valeurs entières restituées
 - Génération synthétique :
-  - Numérique / date : distributions empiriques + bornes, tolérance ±5 %
-  - Catégoriel / booléen : distributions observées, divergence Jensen-Shannon ≤ 0,05
-  - Texte : génération conforme aux regex ou rééchantillonnage (conformité ≥ 95 %)
-- Détection des corrélations inter-colonnes sensibles (Pearson / Spearman, |r| > 0,7)
-- Validation utilisateur des paires à contraindre
-- Rapport de conformité détaillé (global, par colonne, par paire)
-- Export multi-formats (CSV, XLSX, Parquet) + rapport PDF/HTML
+  - Numérique : KDE + clip sur [min, max], tolérance ±5 % (configurable)
+  - Catégoriel / booléen : distribution observée, divergence Jensen-Shannon ≤ 0,05
+  - Texte : rééchantillonnage ou pattern regex (conformité ≥ 95 %)
+  - Datetime : interpolation uniforme sur [min, max]
+- Contraintes de corrélation inter-colonnes (Pearson / Spearman, |r| > 0,7), copule gaussienne
+- Vue par colonne : profil original + résultat synthétique + regex dans un seul expander
+- Rapport de conformité détaillé avec motif KO concis par colonne
+- Export multi-formats (CSV, XLSX, Parquet) + rapport HTML
 
 ---
 
@@ -34,18 +34,26 @@ Application conteneurisée permettant de :
 |---|---|
 | Langage | Python ≥ 3.14 |
 | Gestion des dépendances | Poetry |
-| Interface utilisateur | Streamlit + Bootstrap 5 |
+| Interface utilisateur | Streamlit (CSS personnalisé, sans dépendance externe) |
 | Conteneurisation | Docker + docker-compose |
 
 ---
 
 ## 3. Démarrage rapide
 
+**En local :**
+```bash
+cd gentest
+poetry install
+streamlit run src/anonyx/app.py
+```
+
+**Via Docker :**
 ```bash
 docker compose up --build
 ```
 
-Accès via http://localhost:8501
+Accès : http://localhost:8501
 
 ---
 
@@ -60,9 +68,31 @@ Accès via http://localhost:8501
 
 ---
 
-## 5. Reproductibilité
+## 5. Arborescence
 
-À paramètres et seed identiques, les sorties sont considérées conformes lorsque les métriques de validation sont dans les tolérances configurées.
+```
+gentest/
+├── src/
+│   ├── anonyx/
+│   │   ├── app.py              # Point d'entrée Streamlit
+│   │   ├── core/
+│   │   │   ├── loader.py       # Chargement CSV/XLSX/Parquet
+│   │   │   ├── profiler.py     # Inférence types + statistiques
+│   │   │   ├── correlations.py # Détection corrélations sensibles
+│   │   │   ├── generator.py    # Génération synthétique
+│   │   │   └── validator.py    # Rapport de conformité
+│   │   └── ui/
+│   │       ├── components.py   # CSS + composants réutilisables
+│   │       └── layout.py       # Mise en page Streamlit
+│   └── static/
+│       └── Logo_complet.png
+├── .streamlit/
+│   └── config.toml
+├── pyproject.toml
+├── Dockerfile
+├── docker-compose.yml
+└── VERSION
+```
 
 ---
 
@@ -71,9 +101,10 @@ Accès via http://localhost:8501
 - Les corrélations sont préservées uniquement pour les paires validées par l'utilisateur
 - Les regex trop restrictives peuvent réduire la diversité des données générées
 - La divergence Jensen-Shannon est calculée sur les distributions discrétisées ; les colonnes à très haute cardinalité peuvent nécessiter un ajustement manuel
+- Python 3.14 est en version RC — si l'image `python:3.14-slim` n'est pas disponible sur Docker Hub, utiliser temporairement `3.13-slim`
 
 ---
 
 ## 7. Licence
 
-Apache-2.0
+Apache-2.0 — © Aperto Nota · https://aperto-nota.fr

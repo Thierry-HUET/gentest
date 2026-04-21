@@ -1,57 +1,73 @@
 """
 generator.py – Génération synthétique d'un DataFrame.
-
-Stratégies par type (REQ-STA-01/02/03) :
-  - numeric  : rééchantillonnage KDE + clip sur [min, max]
-  - datetime : interpolation uniforme sur [min, max]
-  - categorical/boolean : rééchantillonnage selon fréquences observées
-  - text     : rééchantillonnage ou génération conforme à une regex
-  - Corrélations validées : copule gaussienne (Cholesky)
 """
 from __future__ import annotations
 
-import re
 import random
 from dataclasses import dataclass, field
+from typing import Any
 
 import numpy as np
 import pandas as pd
 from scipy.stats import gaussian_kde
 from scipy import stats
 
-from gentest.core.profiler import ColumnProfile
-from gentest.core.correlations import CorrelationPair
+from anonyx.core.profiler import ColumnProfile
+from anonyx.core.correlations import CorrelationPair
 
 
 @dataclass
 class GeneratorConfig:
     n_rows: int = 1000
     seed: int = 42
-    # Regex par colonne  {col_name: pattern}
     regex_map: dict[str, str] = field(default_factory=dict)
-    # Paires de corrélations à contraindre (validées par l'utilisateur)
     constrained_pairs: list[CorrelationPair] = field(default_factory=list)
 
 
-# ---------------------------------------------------------------------------
-# Génération texte conforme à une regex (approche simplifiée)
-# ---------------------------------------------------------------------------
+def _numeric_col_to_str_list(series: pd.Series) -> list[str]:
+    s = series.dropna()
+    if pd.api.types.is_float_dtype(s.dtype):
+        try:
+            if (s == s.apply(lambda x: int(x))).all():
+                return s.apply(lambda x: str(int(x))).tolist()
+        except (ValueError, OverflowError):
+            pass
+    return s.astype(str).tolist()
+
+
+def _cast_categorical_value(value: str, profile: ColumnProfile, original_dtype) -> Any:
+    if profile.likely_year:
+        try:
+            return int(value)
+        except (ValueError, TypeError):
+            return value
+    if pd.api.types.is_integer_dtype(original_dtype):
+        try:
+            return int(value)
+        except (ValueError, TypeError):
+            return value
+    if pd.api.types.is_float_dtype(original_dtype):
+        try:
+            return float(value)
+        except (ValueError, TypeError):
+            return value
+    return value
+
+
 _REGEX_CHARSETS = {
     r"\d": "0123456789",
     r"\w": "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_",
     r"\s": " ",
-    r"."  : "abcdefghijklmnopqrstuvwxyz",
+    r"." : "abcdefghijklmnopqrstuvwxyz",
 }
 
+
 def _generate_from_regex(pattern: str, rng: random.Random) -> str:
-    """Génère une valeur simple correspondant à un pattern regex basique."""
-    # Pour les patterns complexes, on utilise la bibliothèque rstr si disponible
     try:
         import rstr
         return rstr.xeger(pattern)
     except ImportError:
         pass
-    # Fallback : génération naïve pour patterns simples du type [A-Z]{2}\d{4}
     result = []
     i = 0
     while i < len(pattern):
@@ -75,22 +91,15 @@ def _generate_from_regex(pattern: str, rng: random.Random) -> str:
     return "".join(result)
 
 
-# ---------------------------------------------------------------------------
-# Générateur principal
-# ---------------------------------------------------------------------------
 def generate(
     df_original: pd.DataFrame,
     profiles: dict[str, ColumnProfile],
     config: GeneratorConfig,
 ) -> pd.DataFrame:
-    """
-    Génère un DataFrame synthétique de config.n_rows lignes.
-    """
     rng_np = np.random.default_rng(config.seed)
     rng_py = random.Random(config.seed)
     n = config.n_rows
 
-    # --- 1. Colonnes numériques : KDE ou uniforme si peu de valeurs --------
     numeric_cols = [col for col, p in profiles.items() if p.col_type == "numeric"]
     numeric_data: dict[str, np.ndarray] = {}
 
@@ -108,7 +117,6 @@ def generate(
             samples = rng_np.uniform(p.min, p.max, size=n)
         numeric_data[col] = samples
 
-    # --- 2. Contraintes de corrélation (copule gaussienne / Cholesky) ------
     if config.constrained_pairs and len(numeric_cols) >= 2:
         constrained_cols = list(
             {col for pair in config.constrained_pairs for col in (pair.col_a, pair.col_b)}
@@ -123,37 +131,30 @@ def generate(
                     i, j = col_index[pair.col_a], col_index[pair.col_b]
                     corr_matrix[i, j] = pair.coefficient
                     corr_matrix[j, i] = pair.coefficient
-            # Assurer que la matrice est définie positive
             eigvals = np.linalg.eigvalsh(corr_matrix)
             if eigvals.min() <= 0:
                 corr_matrix += np.eye(k) * (abs(eigvals.min()) + 1e-6)
-
             try:
                 L = np.linalg.cholesky(corr_matrix)
                 z = rng_np.standard_normal((k, n))
-                correlated = (L @ z).T  # shape (n, k)
-                # Transformer via quantiles pour préserver les marginales
+                correlated = (L @ z).T
                 for idx, col in enumerate(constrained_cols):
                     u = stats.norm.cdf(correlated[:, idx])
                     src = df_original[col].dropna().values.astype(float)
                     src.sort()
-                    quantile_indices = np.clip(
-                        (u * len(src)).astype(int), 0, len(src) - 1
-                    )
+                    quantile_indices = np.clip((u * len(src)).astype(int), 0, len(src) - 1)
                     numeric_data[col] = src[quantile_indices]
             except np.linalg.LinAlgError:
-                pass  # Fallback : on garde les données non contraintes
+                pass
 
-    # --- 3. Construction du DataFrame --------------------------------------
     out: dict[str, list] = {}
-
     for col in df_original.columns:
         p = profiles[col]
-        null_mask = rng_np.random(n) < p.null_rate
+        null_mask  = rng_np.random(n) < p.null_rate
+        orig_dtype = df_original[col].dtype
 
         if p.col_type == "numeric":
-            values = numeric_data[col].copy()
-            arr = values.tolist()
+            arr = numeric_data[col].copy().tolist()
             for i in range(n):
                 if null_mask[i]:
                     arr[i] = None
@@ -161,9 +162,9 @@ def generate(
 
         elif p.col_type in {"categorical", "boolean"}:
             modalities = list(p.value_counts.keys())
-            freqs = list(p.value_counts.values())
-            choices = rng_np.choice(modalities, size=n, p=np.array(freqs) / sum(freqs))
-            arr = choices.tolist()
+            freqs = np.array(list(p.value_counts.values()))
+            choices = rng_np.choice(modalities, size=n, p=freqs / freqs.sum())
+            arr = [_cast_categorical_value(v, p, orig_dtype) for v in choices.tolist()]
             for i in range(n):
                 if null_mask[i]:
                     arr[i] = None
@@ -171,7 +172,10 @@ def generate(
 
         elif p.col_type == "text":
             pattern = config.regex_map.get(col)
-            src_values = df_original[col].dropna().astype(str).tolist()
+            if p.likely_identifier and pd.api.types.is_numeric_dtype(orig_dtype):
+                src_values = _numeric_col_to_str_list(df_original[col])
+            else:
+                src_values = df_original[col].dropna().astype(str).tolist()
             arr = []
             for i in range(n):
                 if null_mask[i]:
@@ -184,18 +188,16 @@ def generate(
 
         elif p.col_type == "datetime":
             src = df_original[col].dropna()
-            t_min = src.min().value  # nanoseconds
+            t_min = src.min().value
             t_max = src.max().value
-            ts = rng_np.integers(t_min, t_max, size=n)
-            dts = pd.to_datetime(ts)
-            arr = dts.tolist()
+            ts  = rng_np.integers(t_min, t_max, size=n)
+            arr = pd.to_datetime(ts).tolist()
             for i in range(n):
                 if null_mask[i]:
                     arr[i] = None
             out[col] = arr
 
         else:
-            # unknown → rééchantillonnage brut
             src_values = df_original[col].tolist()
             out[col] = [rng_py.choice(src_values) for _ in range(n)]
 

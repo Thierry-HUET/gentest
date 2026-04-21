@@ -1,7 +1,7 @@
 [project]
-name = "gentest"
-version = "1.0.0"
-description = "Générateur de fichier tests"
+name = "anonyx"
+version = "1.0.1"
+description = "Anonyx·Gen – Générateur de jeu de test statistiquement conforme"
 authors = [
     {name = "Thierry HUET", email = "thierry.huet@aperto-nota.fr"}
 ]
@@ -16,18 +16,17 @@ dependencies = [
     "openpyxl>=3.1.0",
     "pyarrow>=16.0.0",
     "rstr>=3.2.0",
-    "watchdog (>=6.0.0,<7.0.0)",
 ]
 
 [project.scripts]
-gentest = "gentest.app:run_app"
+anonyx-gen = "anonyx.app:run_app"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.poetry]
-packages = [{include = "gentest", from = "src"}]
+packages = [{include = "anonyx", from = "src"}]
 
 [tool.poetry.group.dev.dependencies]
 pytest = ">=8.0.0"

@@ -1,5 +1,5 @@
 services:
-  gentest:
+  anonyx-gen:
     build: .
     ports:
       - "8501:8501"
