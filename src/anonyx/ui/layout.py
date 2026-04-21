@@ -12,6 +12,7 @@ import streamlit as st
 from anonyx.core.loader import load_file
 from anonyx.core.profiler import profile_dataframe, ColumnProfile
 from anonyx.core.correlations import detect_sensitive_pairs, sensitive_only, CorrelationPair
+from anonyx.core.bivariate import compute_bivariate, BivariateResult
 from anonyx.core.generator import generate, GeneratorConfig
 from anonyx.core.validator import build_report, ConformityReport, ColumnReport, CorrelationReport
 from anonyx.ui.components import (
@@ -89,8 +90,160 @@ def _report_html(report: ConformityReport) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Heatmap SVG des corrélations contraintes
+# Heatmap bivariée triangulaire (original \ haut / synthétique bas)
 # ---------------------------------------------------------------------------
+def _render_bivariate_heatmap(result: BivariateResult) -> None:
+    """Heatmap triangulaire : triangle supérieur = original, inférieur = synthétique."""
+    cols = result.columns
+    n    = len(cols)
+    if n < 2:
+        alert("Moins de 2 colonnes bivariées retenues après filtrage spectral.")
+        return
+
+    CELL  = 80
+    LABEL = 110
+    PAD   = 4
+    total_w = LABEL + n * (CELL + PAD)
+    total_h = LABEL + n * (CELL + PAD)
+
+    def _color(v: float, is_synt: bool = False) -> str:
+        """Blanc (0) → bleu (1) pour original, blanc (0) → orange (1) pour synthétique."""
+        v = max(0.0, min(1.0, v))
+        if is_synt:
+            r = int(255 - v * (255 - 230))
+            g = int(255 - v * (255 - 100))
+            b = int(255 - v * 255)
+        else:
+            r = int(255 - v * (255 - 0))
+            g = int(255 - v * (255 - 77))
+            b = int(255 - v * (255 - 153))
+        return f"#{r:02x}{g:02x}{b:02x}"
+
+    def _text_color(v: float) -> str:
+        return "#fff" if v > 0.45 else "#333"
+
+    TYPE_LABEL = {
+        "num×num": "r²",
+        "cat×cat": "V",
+        "η²": "η²",
+        "num×cat": "η²",
+    }
+
+    cells = []
+
+    # Labels colonnes (rotation via textPath)
+    for i, col in enumerate(cols):
+        x = LABEL + i * (CELL + PAD) + CELL // 2
+        y = LABEL - 6
+        short = col if len(col) <= 14 else col[:12] + "…"
+        cells.append(
+            f'<text x="{x}" y="{y}" text-anchor="middle" font-size="9" '
+            f'font-family="Segoe UI,sans-serif" fill="#444">{short}</text>'
+        )
+        # Label ligne
+        xl = LABEL - 6
+        yl = LABEL + i * (CELL + PAD) + CELL // 2 + 4
+        cells.append(
+            f'<text x="{xl}" y="{yl}" text-anchor="end" font-size="9" '
+            f'font-family="Segoe UI,sans-serif" fill="#444">{short}</text>'
+        )
+
+    # Cellules
+    for i in range(n):
+        for j in range(n):
+            x = LABEL + j * (CELL + PAD)
+            y = LABEL + i * (CELL + PAD)
+
+            if i == j:
+                # Diagonale
+                cells.append(
+                    f'<rect x="{x}" y="{y}" width="{CELL}" height="{CELL}" '
+                    f'rx="4" fill="#f0f4f8"/>'
+                )
+                short = cols[i] if len(cols[i]) <= 10 else cols[i][:8] + "…"
+                cells.append(
+                    f'<text x="{x+CELL//2}" y="{y+CELL//2+4}" text-anchor="middle" '
+                    f'font-size="8" font-family="Segoe UI,sans-serif" fill="#888">1.000</text>'
+                )
+            elif i < j:
+                # Triangle supérieur = original
+                v = result.matrix_orig[i, j]
+                ptype = result.pair_types.get((cols[i], cols[j]), "")
+                metric = TYPE_LABEL.get(ptype, "")
+                bg = _color(v, is_synt=False)
+                tc = _text_color(v)
+                cells.append(
+                    f'<rect x="{x}" y="{y}" width="{CELL}" height="{CELL}" rx="4" fill="{bg}"/>'
+                )
+                cells.append(
+                    f'<text x="{x+CELL//2}" y="{y+CELL//2}" text-anchor="middle" '
+                    f'font-size="11" font-family="Segoe UI,sans-serif" '
+                    f'font-weight="600" fill="{tc}">{v:.3f}</text>'
+                )
+                cells.append(
+                    f'<text x="{x+CELL//2}" y="{y+CELL//2+13}" text-anchor="middle" '
+                    f'font-size="8" font-family="Segoe UI,sans-serif" fill="{tc}">{metric}</text>'
+                )
+            else:
+                # Triangle inférieur = synthétique (ou vide)
+                if result.matrix_synt is not None:
+                    v     = result.matrix_synt[i, j]
+                    v_ref = result.matrix_orig[i, j]
+                    delta = abs(v - v_ref)
+                    bg    = _color(v, is_synt=True)
+                    tc    = _text_color(v)
+                    cells.append(
+                        f'<rect x="{x}" y="{y}" width="{CELL}" height="{CELL}" rx="4" fill="{bg}"/>'
+                    )
+                    cells.append(
+                        f'<text x="{x+CELL//2}" y="{y+CELL//2}" text-anchor="middle" '
+                        f'font-size="11" font-family="Segoe UI,sans-serif" '
+                        f'font-weight="600" fill="{tc}">{v:.3f}</text>'
+                    )
+                    cells.append(
+                        f'<text x="{x+CELL//2}" y="{y+CELL//2+13}" text-anchor="middle" '
+                        f'font-size="8" font-family="Segoe UI,sans-serif" fill="{tc}">Δ {delta:.3f}</text>'
+                    )
+                else:
+                    cells.append(
+                        f'<rect x="{x}" y="{y}" width="{CELL}" height="{CELL}" '
+                        f'rx="4" fill="#f8f9fa"/>'
+                    )
+                    cells.append(
+                        f'<text x="{x+CELL//2}" y="{y+CELL//2+4}" text-anchor="middle" '
+                        f'font-size="9" font-family="Segoe UI,sans-serif" fill="#ccc">—</text>'
+                    )
+
+    svg = (
+        f'<svg xmlns="http://www.w3.org/2000/svg" '
+        f'viewBox="0 0 {total_w} {total_h}" width="{total_w}" height="{total_h}">'
+        + "".join(cells)
+        + "</svg>"
+    )
+
+    has_synt = result.matrix_synt is not None
+    legend_orig  = f'<span style="display:inline-block;width:12px;height:12px;background:#004d99;border-radius:2px;margin-right:4px;"></span>Original (bleu)'
+    legend_synt  = f'<span style="display:inline-block;width:12px;height:12px;background:#e66400;border-radius:2px;margin-right:4px;"></span>Synthétique (orange)' if has_synt else ""
+    metric_note  = "r² = Pearson² (num×num) · V = Cramér (cat×cat) · η² = rapport de corrélation (num×cat)"
+    vp_note      = f"{result.n_significant} valeur(s) propre(s) > 1 · {len(cols)} colonne(s) retenue(s) sur {sum(1 for p in [None] * len(cols))}"
+
+    html_content = (
+        f'<!DOCTYPE html><html><head><meta charset="utf-8"><style>'
+        f'body{{margin:0;padding:4px;background:transparent;font-family:"Segoe UI",sans-serif;overflow:auto;}}'
+        f'.legend{{font-size:11px;color:#666;margin-top:8px;line-height:1.8;}}'
+        f'</style></head><body>'
+        f'<div style="overflow-x:auto;">{svg}</div>'
+        f'<div class="legend">{legend_orig}'
+        + (f' &nbsp;&nbsp; {legend_synt}' if has_synt else '')
+        + f'<br><span style="color:#999;">{metric_note}</span>'
+        + f'<br><span style="color:#999;">{result.n_significant} VP > 1 (Kaiser) · {len(cols)} colonne(s) retenue(s)</span>'
+        + '</div></body></html>'
+    )
+    b64 = _b64.b64encode(html_content.encode("utf-8")).decode("utf-8")
+    height = total_h + 80
+    st.components.v1.iframe(f"data:text/html;base64,{b64}", height=height, scrolling=True)
+
+
 def _lerp_color(t: float) -> str:
     t = max(0.0, min(1.0, t))
     r = int(25  + t * (192 - 25))
@@ -445,6 +598,13 @@ def run_app() -> None:
 
     profiles = profile_dataframe(df_orig)
 
+    # Calcul bivarié sur le jeu original (mis en cache)
+    if "bivariate_key" not in st.session_state or st.session_state["bivariate_key"] != uploaded.name:
+        with st.spinner("Analyse bivariée en cours…"):
+            st.session_state["bivariate_orig"] = compute_bivariate(df_orig, profiles)
+            st.session_state["bivariate_key"]  = uploaded.name
+            st.session_state.pop("bivariate", None)
+
     if "regex_map" not in st.session_state:
         st.session_state["regex_map"] = {}
     regex_map: dict[str, str] = st.session_state["regex_map"]
@@ -504,6 +664,7 @@ def run_app() -> None:
             )
             try:
                 df_synt = generate(df_orig, profiles, config)
+                bivariate_result = compute_bivariate(df_orig, profiles, df_synt=df_synt)
                 report  = build_report(
                     df_original=df_orig, df_synthetic=df_synt,
                     profiles_original=profiles, constrained_pairs=constrained_pairs,
@@ -515,6 +676,7 @@ def run_app() -> None:
                 st.session_state["constrained_pairs"] = constrained_pairs
                 st.session_state["report"]            = report
                 st.session_state["tolerance"]         = tolerance
+                st.session_state["bivariate"]         = bivariate_result
                 st.rerun()
             except Exception as e:
                 alert(f"Erreur lors de la génération : {e}", "danger")
@@ -598,6 +760,16 @@ def run_app() -> None:
 
     with st.expander("Aperçu du jeu synthétique", expanded=False):
         st.dataframe(df_synt.head(20), width='stretch')
+
+    # Heatmap bivariée
+    biv = st.session_state.get("bivariate") or st.session_state.get("bivariate_orig")
+    if biv is not None:
+        section_header(
+            "Associations bivariées",
+            f"Toutes paires · filtrage spectral Kaiser (λ>1) · "
+            f"{biv.n_significant} VP significative(s) · {len(biv.columns)} colonne(s) retenue(s)"
+        )
+        _render_bivariate_heatmap(biv)
 
     # ── ⑤ Rapport détaillé ───────────────────────────────────────────────────
     section_header("⑤ Rapport détaillé", "Conformité colonne par colonne")

@@ -1,5 +1,5 @@
 # Spécification – Exigences formelles
-## Midara v1.1.0 — Générateur de jeu de test statistiquement conforme
+## Midara v1.2.0 — Générateur de jeu de test statistiquement conforme
 
 > Midara est le premier module du **Projet Anonyx** (Aperto Nota),
 > dédié à la protection et à la maîtrise des données personnelles et sensibles.
@@ -110,6 +110,45 @@ Le système SHALL appliquer les contraintes de corrélation via une copule gauss
 
 ---
 
+## 5bis. Statistiques bivariées
+
+### REQ-BIV-01 – Matrice d’association généralisée ✅
+
+Le système SHALL calculer un score d’association normalisé [0,1] pour toutes les paires de colonnes éligibles (type `numeric`, `categorical`, `boolean`). La mesure utilisée SHALL dépendre des types des deux colonnes :
+
+| Paire | Mesure | Intervalle |
+|---|---|---|
+| Numérique × Numérique | r² de Pearson | [0, 1] |
+| Catégoriel × Catégoriel | V de Cramér | [0, 1] |
+| Numérique × Catégoriel | η² (rapport de corrélation) | [0, 1] |
+| Booléen × * | traité comme catégoriel | — |
+| Texte / Datetime × * | exclu | — |
+
+Les colonnes ayant moins de 5 valeurs non nulles SHALL être exclues.
+
+### REQ-BIV-02 – Filtrage spectral (Kaiser) ✅
+
+Le système SHALL filtrer les colonnes peu informatives par décomposition spectrale de la matrice d’association :
+- Décomposition propre (`numpy.linalg.eigh`) de la matrice N×N
+- Sélection des axes significatifs selon le critère de Kaiser : valeurs propres λ > 1
+- Calcul de la contribution de chaque colonne aux axes significatifs (cos²)
+- Conservation des colonnes dont la contribution ≥ contribution moyenne
+- Fallback : si aucune VP > 1, conserver l’axe principal (VP maximale)
+
+### REQ-BIV-03 – Heatmap triangulaire ✅
+
+L’interface SHALL afficher une heatmap triangulaire des associations sur les colonnes retenues :
+- **Triangle supérieur** : scores d’association du jeu original (palette bleu)
+- **Triangle inférieur** : scores d’association du jeu synthétique + Δ (palette orange) — affiché après génération uniquement
+- **Diagonale** : valeur 1.000 (fond neutre)
+- Chaque cellule SHALL afficher le score et le type de mesure (r², V, η²)
+
+### REQ-BIV-04 – Cache et performance ✅
+
+Le calcul bivarié sur le jeu original SHALL être mis en cache dans la session (clé = nom du fichier) afin d’éviter un recalcul à chaque rechargement de page. Le calcul sur le jeu synthétique SHALL être déclenché uniquement lors de la génération.
+
+---
+
 ## 6. Interface utilisateur
 
 ### REQ-UI-01 – Structure ✅
@@ -193,4 +232,4 @@ Les heuristiques `_is_likely_identifier`, `_is_likely_year` et `_is_integer_valu
 
 ## 9. Versionnement
 
-Le fichier `VERSION` à la racine du projet fait référence. La version courante est **1.1.0**.
+Le fichier `VERSION` à la racine du projet fait référence. La version courante est **1.2.0**.
