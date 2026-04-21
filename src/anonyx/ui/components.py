@@ -46,6 +46,8 @@ _LOGO_APP_B64  = _b64(_LOGO_APP_PATH)
 _LOGO_CORP_B64 = _b64(_LOGO_CORP_PATH)
 _VERSION       = _load_version()
 
+LOGO_APP_B64   = _LOGO_APP_B64  # export public pour layout.py
+
 # ---------------------------------------------------------------------------
 # CSS global
 # ---------------------------------------------------------------------------

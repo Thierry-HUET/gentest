@@ -1,4 +1,4 @@
-# Midara v1.1.0
+# Midara v1.0.2
 ### Générateur de jeu de test statistiquement conforme
 
 Midara fait partie du **Projet Anonyx**, dédié à la protection et à la maîtrise des données.

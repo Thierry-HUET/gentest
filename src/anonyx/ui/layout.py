@@ -4,7 +4,7 @@ layout.py – Pages / sections de l'application Streamlit — Midara (Projet Ano
 from __future__ import annotations
 
 import io
-import base64
+import base64 as _b64
 
 import pandas as pd
 import streamlit as st
@@ -27,6 +27,7 @@ from anonyx.ui.components import (
     COLOR_WARNING,
     COLOR_DANGER,
     COLOR_LIGHT,
+    LOGO_APP_B64,
 )
 
 
@@ -145,7 +146,7 @@ def _render_correlation_heatmap(reports: list[CorrelationReport], tolerance: flo
         f'<span style="color:{c1};font-weight:700;">■ non conforme</span>'
         f' &nbsp;·&nbsp; Rouge complet : Δ ≥ {delta_max:.3f}</p></body></html>'
     )
-    b64 = base64.b64encode(html_content.encode("utf-8")).decode("utf-8")
+    b64 = _b64.b64encode(html_content.encode("utf-8")).decode("utf-8")
     st.iframe(f"data:text/html;base64,{b64}", height=total_h + 42, scrolling=False)
 
 
@@ -368,7 +369,7 @@ def run_app() -> None:
     inject_styles()
 
     with st.sidebar:
-        sidebar_app_logo()
+        st.markdown("<div style='padding:.6rem 0 .4rem 0;'></div>", unsafe_allow_html=True)
         st.markdown(
             "<p style='font-size:.85rem;font-weight:600;margin-bottom:6px;'>📂 Fichier source</p>",
             unsafe_allow_html=True,
@@ -403,16 +404,33 @@ def run_app() -> None:
             regex_min_rate = st.slider("Conformité regex min. (%)", 50, 100, 95) / 100
         sidebar_logo()
 
-    st.markdown(
-        f"<h3 style='color:{COLOR_PRIMARY};margin-bottom:.25rem;'>Midara</h3>"
-        f"<p style='color:#6c757d;font-size:.9rem;margin-bottom:1.5rem;'>"
-        f"Projet Anonyx · Générateur de jeu de test statistiquement conforme — "
-        f"Chargez un fichier dans la barre latérale, puis lancez la génération.</p>",
-        unsafe_allow_html=True,
-    )
+    if LOGO_APP_B64:
+        col_logo, col_text = st.columns([1, 6])
+        with col_logo:
+            logo_bytes = _b64.b64decode(LOGO_APP_B64)
+            st.image(logo_bytes)
+        with col_text:
+            st.markdown(
+                f"<h3 style='color:{COLOR_PRIMARY};margin:0 0 .2rem 0;'><strong>Midara</strong></h3>"
+                f"<p style='color:#6c757d;font-size:.9rem;margin:0;line-height:1.6;'>"
+                f"<strong style='color:{COLOR_SECONDARY};'>Projet Anonyx</strong> : pour mieux maîtriser l’exposition de ses données<br>"
+                f"Générateur de jeu de test statistiquement conforme"
+                f"</p>",
+                unsafe_allow_html=True,
+            )
+    else:
+        st.markdown(
+            f"<h3 style='color:{COLOR_PRIMARY};margin:0 0 .2rem 0;'><strong>Midara</strong></h3>"
+            f"<p style='color:#6c757d;font-size:.9rem;margin:0;line-height:1.6;'>"
+            f"<strong style='color:{COLOR_SECONDARY};'>Projet Anonyx</strong> : pour mieux maîtriser l’exposition de ses données<br>"
+            f"Générateur de jeu de test statistiquement conforme"
+            f"</p>",
+            unsafe_allow_html=True,
+        )
+    st.markdown("<div style='margin-bottom:1rem;'></div>", unsafe_allow_html=True)
 
     if uploaded is None:
-        alert("Déposez un fichier CSV, XLSX ou Parquet dans la barre latérale pour commencer.")
+        alert("Mode opératoire : Déposez un fichier CSV, XLSX ou Parquet dans la barre latérale, puis lancez la génération.")
         return
 
     try:
@@ -444,7 +462,7 @@ def run_app() -> None:
 
     section_header("① Vue par colonne", f"Profil · type inféré · résultat synthétique · regex — {n_cols} colonnes{status}")
 
-    with st.expander("Détail des colonnes", expanded=True):
+    with st.expander("Détail des colonnes", expanded=False):
         if n_id:
             alert(
                 f"\u26a0 {n_id} colonne(s) requalifi\u00e9e(s) en <strong>texte</strong> (identifiant probable) : "
