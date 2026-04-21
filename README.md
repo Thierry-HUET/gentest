@@ -1,12 +1,13 @@
-# Anonyx·Gen v1.0.1
+# anonyx_Gen
+### v1.0.1 - (c) Thierry HUET / APERTO-NOTA - 04/2026
 ### Générateur de jeu de test statistiquement conforme
 
-Anonyx·Gen fait partie de la suite **Anonyx**, dédiée à la protection et à la maîtrise des données.
+anonyx_Gen fait partie de la suite **Anonyx**, dédiée à la protection et à la maîtrise des données.
 
 | Produit | Rôle |
 |---|---|
-| **Anonyx·Gen** | Génération de jeux de test synthétiques (ce module) |
-| **Anonyx·Mask** | Pseudonymisation de données _(à venir)_ |
+| **anonyx_Gen** | Génération de jeux de test synthétiques (ce module) |
+| **anonyx_Mask** | Pseudonymisation de données _(à venir)_ |
 
 ---
 
