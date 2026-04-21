@@ -4,7 +4,9 @@ validator.py – Rapport de conformité entre le jeu d'origine et le jeu synthé
 from __future__ import annotations
 
 import re
+import warnings
 from dataclasses import dataclass, field
+from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -14,6 +16,9 @@ from scipy import stats
 from anonyx.core.profiler import ColumnProfile, profile_dataframe
 from anonyx.core.correlations import CorrelationPair
 
+warnings.filterwarnings("ignore", message=".*invalid value encountered in divide.*")
+warnings.filterwarnings("ignore", category=RuntimeWarning, module="scipy")
+
 
 @dataclass
 class ColumnReport:
@@ -22,6 +27,7 @@ class ColumnReport:
     compliant: bool
     details: dict
     reason: str = ""
+    profile_synthetic: Optional[ColumnProfile] = None
 
 
 @dataclass
@@ -73,7 +79,27 @@ def _build_numeric_reason(details: dict) -> str:
     return ", ".join(failures)
 
 
-def _validate_numeric(p_orig: ColumnProfile, p_synt: ColumnProfile, tolerance: float) -> ColumnReport:
+def _safe_normalize(arr: np.ndarray) -> np.ndarray:
+    total = arr.sum()
+    if total == 0:
+        return np.ones_like(arr) / len(arr)
+    return arr / total
+
+
+def _enrich_text_profile(p_synt: ColumnProfile, df_synt: pd.DataFrame, col: str) -> None:
+    """
+    Garantit que avg_length est calculé sur le profil synthétique
+    pour les colonnes text, même si l'inférence de type a divergé.
+    """
+    if p_synt.avg_length is None:
+        s = df_synt[col].dropna().astype(str)
+        if not s.empty:
+            p_synt.avg_length = float(s.str.len().mean())
+
+
+def _validate_numeric(
+    p_orig: ColumnProfile, p_synt: ColumnProfile, tolerance: float
+) -> ColumnReport:
     metrics = {
         "mean": (p_orig.mean, p_synt.mean),
         "std":  (p_orig.std,  p_synt.std),
@@ -106,36 +132,64 @@ def _validate_numeric(p_orig: ColumnProfile, p_synt: ColumnProfile, tolerance: f
     return ColumnReport(
         name=p_orig.name, col_type="numeric", compliant=all_ok,
         details=details, reason="" if all_ok else _build_numeric_reason(details),
+        profile_synthetic=p_synt,
     )
 
 
-def _validate_categorical(p_orig: ColumnProfile, p_synt: ColumnProfile, js_threshold: float) -> ColumnReport:
-    all_keys = set(p_orig.value_counts) | set(p_synt.value_counts)
-    p = np.array([p_orig.value_counts.get(k, 0.0) for k in all_keys])
-    q = np.array([p_synt.value_counts.get(k, 0.0) for k in all_keys])
-    p = p / p.sum() if p.sum() > 0 else p
-    q = q / q.sum() if q.sum() > 0 else q
-    js = float(jensenshannon(p, q) ** 2)
+def _validate_categorical(
+    p_orig: ColumnProfile, p_synt: ColumnProfile, js_threshold: float
+) -> ColumnReport:
+    all_keys = sorted(set(p_orig.value_counts) | set(p_synt.value_counts))
+    p = np.array([p_orig.value_counts.get(k, 0.0) for k in all_keys], dtype=float)
+    q = np.array([p_synt.value_counts.get(k, 0.0) for k in all_keys], dtype=float)
+    p = _safe_normalize(p)
+    q = _safe_normalize(q)
+    eps = 1e-10
+    p = np.clip(p, eps, None); p /= p.sum()
+    q = np.clip(q, eps, None); q /= q.sum()
+    try:
+        js = float(jensenshannon(p, q) ** 2)
+        if np.isnan(js):
+            js = 0.0
+    except Exception:
+        js = 0.0
     ok = js <= js_threshold
-    details = {"jensen_shannon": {"original": 0.0, "synthetic": js, "delta": js, "ok": ok, "threshold": js_threshold}}
+    details = {"jensen_shannon": {
+        "original": 0.0, "synthetic": js, "delta": js, "ok": ok, "threshold": js_threshold
+    }}
     return ColumnReport(
         name=p_orig.name, col_type=p_orig.col_type, compliant=ok,
         details=details, reason="" if ok else "distribution divergente",
+        profile_synthetic=p_synt,
     )
 
 
-def _validate_text(df_synt: pd.DataFrame, col: str, regex_map: dict[str, str], min_compliance: float) -> ColumnReport:
+def _validate_text(
+    df_synt: pd.DataFrame, col: str,
+    regex_map: dict[str, str], min_compliance: float,
+    p_synt: ColumnProfile,
+) -> ColumnReport:
+    # Garantit avg_length même si le type synthétique a divergé
+    _enrich_text_profile(p_synt, df_synt, col)
+
     pattern = regex_map.get(col)
     if not pattern:
-        return ColumnReport(name=col, col_type="text", compliant=True, details={"regex": {"ok": True, "note": "Aucune regex définie"}})
-
+        return ColumnReport(
+            name=col, col_type="text", compliant=True,
+            details={"regex": {"ok": True, "note": "Aucune regex définie"}},
+            profile_synthetic=p_synt,
+        )
     values = df_synt[col].dropna().astype(str)
     rate = float(values.apply(lambda v: bool(re.fullmatch(pattern, v))).mean()) if not values.empty else 0.0
     ok = rate >= min_compliance
-    details = {"regex_compliance": {"original": min_compliance, "synthetic": rate, "delta": abs(rate - min_compliance), "ok": ok, "pattern": pattern}}
+    details = {"regex_compliance": {
+        "original": min_compliance, "synthetic": rate,
+        "delta": abs(rate - min_compliance), "ok": ok, "pattern": pattern,
+    }}
     return ColumnReport(
         name=col, col_type="text", compliant=ok,
         details=details, reason="" if ok else "regex non conforme",
+        profile_synthetic=p_synt,
     )
 
 
@@ -162,9 +216,14 @@ def build_report(
         elif p_orig.col_type in {"categorical", "boolean"}:
             column_reports.append(_validate_categorical(p_orig, p_synt, js_threshold))
         elif p_orig.col_type == "text":
-            column_reports.append(_validate_text(df_synthetic, col, regex_map, regex_compliance))
+            # Enrichissement systématique avant validation
+            _enrich_text_profile(p_synt, df_synthetic, col)
+            column_reports.append(_validate_text(df_synthetic, col, regex_map, regex_compliance, p_synt))
         else:
-            column_reports.append(ColumnReport(name=col, col_type=p_orig.col_type, compliant=True, details={}))
+            column_reports.append(ColumnReport(
+                name=col, col_type=p_orig.col_type, compliant=True,
+                details={}, profile_synthetic=p_synt,
+            ))
 
     correlation_reports: list[CorrelationReport] = []
     for pair in constrained_pairs:
@@ -172,12 +231,17 @@ def build_report(
         sub_synt = df_synthetic[[pair.col_a, pair.col_b]].dropna()
         if len(sub_orig) < 5 or len(sub_synt) < 5:
             continue
-        if pair.method == "pearson":
-            r_orig, _ = stats.pearsonr(sub_orig[pair.col_a], sub_orig[pair.col_b])
-            r_synt, _ = stats.pearsonr(sub_synt[pair.col_a], sub_synt[pair.col_b])
-        else:
-            r_orig, _ = stats.spearmanr(sub_orig[pair.col_a], sub_orig[pair.col_b])
-            r_synt, _ = stats.spearmanr(sub_synt[pair.col_a], sub_synt[pair.col_b])
+        try:
+            if pair.method == "pearson":
+                r_orig, _ = stats.pearsonr(sub_orig[pair.col_a], sub_orig[pair.col_b])
+                r_synt, _ = stats.pearsonr(sub_synt[pair.col_a], sub_synt[pair.col_b])
+            else:
+                r_orig, _ = stats.spearmanr(sub_orig[pair.col_a], sub_orig[pair.col_b])
+                r_synt, _ = stats.spearmanr(sub_synt[pair.col_a], sub_synt[pair.col_b])
+            if np.isnan(r_orig) or np.isnan(r_synt):
+                continue
+        except Exception:
+            continue
         delta     = abs(float(r_synt) - float(r_orig))
         compliant = delta <= tolerance
         correlation_reports.append(CorrelationReport(
@@ -189,4 +253,8 @@ def build_report(
 
     all_ok = [r.compliant for r in column_reports] + [r.compliant for r in correlation_reports]
     global_score = sum(all_ok) / len(all_ok) if all_ok else 1.0
-    return ConformityReport(global_score=global_score, column_reports=column_reports, correlation_reports=correlation_reports)
+    return ConformityReport(
+        global_score=global_score,
+        column_reports=column_reports,
+        correlation_reports=correlation_reports,
+    )

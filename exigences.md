@@ -1,8 +1,8 @@
 # Spécification – Exigences formelles
-## Anonyx·Gen v1.0.1 — Générateur de jeu de test statistiquement conforme
+## Midara v1.0.1 — Générateur de jeu de test statistiquement conforme
 
-> Anonyx·Gen est le premier module de la suite **Anonyx** (Aperto Nota),
-> dédiée à la protection et à la maîtrise des données personnelles et sensibles.
+> Midara est le premier module du **Projet Anonyx** (Aperto Nota),
+> dédié à la protection et à la maîtrise des données personnelles et sensibles.
 
 ---
 
@@ -20,14 +20,14 @@ Le système SHALL permettre la génération de jeux de données synthétiques re
 
 Le système SHALL être développé en Python ≥ 3.14, géré via Poetry, et packagé dans une image Docker. Le package Python SHALL être nommé `anonyx` et le point d'entrée Streamlit SHALL être `src/anonyx/app.py`.
 
-### REQ-GEN-04 – Suite Anonyx
+### REQ-GEN-04 – Projet Anonyx
 
-Anonyx·Gen SHALL s'inscrire dans la suite Anonyx. Les modules suivants sont prévus :
+Midara SHALL s'inscrire dans le **Projet Anonyx**. Les modules suivants sont prévus :
 
 | Module | Rôle |
 |---|---|
-| Anonyx·Gen | Génération de jeux de test synthétiques (ce module) |
-| Anonyx·Mask | Pseudonymisation de données |
+| **Midara** | Génération de jeux de test synthétiques (ce module) |
+| anonyx_Mask | Pseudonymisation de données |
 
 ---
 

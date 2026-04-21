@@ -1,2 +1,2 @@
-# anonyx – Suite Anonyx · Module Gen
-__version__ = "0.0.1"
+# anonyx_Gen – Suite Anonyx
+__version__ = "1.0.1"

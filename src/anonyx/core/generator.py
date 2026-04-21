@@ -1,5 +1,13 @@
 """
 generator.py – Génération synthétique d'un DataFrame.
+
+Stratégies par type :
+  - numeric     : KDE float pur (les entiers sont désormais requalifiés en text)
+  - categorical : rééchantillonnage selon fréquences observées
+  - boolean     : idem categorical
+  - text        : rééchantillonnage exact (y compris entiers et identifiants)
+  - datetime    : interpolation uniforme sur [min, max]
+  - Corrélations validées : copule gaussienne (Cholesky)
 """
 from __future__ import annotations
 
@@ -25,6 +33,7 @@ class GeneratorConfig:
 
 
 def _numeric_col_to_str_list(series: pd.Series) -> list[str]:
+    """Série numérique → liste de strings sans suffixe '.0'."""
     s = series.dropna()
     if pd.api.types.is_float_dtype(s.dtype):
         try:
@@ -100,6 +109,8 @@ def generate(
     rng_py = random.Random(config.seed)
     n = config.n_rows
 
+    # --- 1. Colonnes numériques : KDE float pur ---------------------------
+    # Les entiers ont été requalifiés en "text" dans profiler.py
     numeric_cols = [col for col, p in profiles.items() if p.col_type == "numeric"]
     numeric_data: dict[str, np.ndarray] = {}
 
@@ -117,6 +128,7 @@ def generate(
             samples = rng_np.uniform(p.min, p.max, size=n)
         numeric_data[col] = samples
 
+    # --- 2. Contraintes de corrélation (copule Cholesky) ------------------
     if config.constrained_pairs and len(numeric_cols) >= 2:
         constrained_cols = list(
             {col for pair in config.constrained_pairs for col in (pair.col_a, pair.col_b)}
@@ -147,6 +159,7 @@ def generate(
             except np.linalg.LinAlgError:
                 pass
 
+    # --- 3. Construction du DataFrame -------------------------------------
     out: dict[str, list] = {}
     for col in df_original.columns:
         p = profiles[col]
@@ -154,6 +167,7 @@ def generate(
         orig_dtype = df_original[col].dtype
 
         if p.col_type == "numeric":
+            # Float pur — pas d'entiers ici (requalifiés en text)
             arr = numeric_data[col].copy().tolist()
             for i in range(n):
                 if null_mask[i]:
@@ -172,7 +186,8 @@ def generate(
 
         elif p.col_type == "text":
             pattern = config.regex_map.get(col)
-            if p.likely_identifier and pd.api.types.is_numeric_dtype(orig_dtype):
+            # Conversion propre pour les colonnes numériques requalifiées en text
+            if pd.api.types.is_numeric_dtype(orig_dtype):
                 src_values = _numeric_col_to_str_list(df_original[col])
             else:
                 src_values = df_original[col].dropna().astype(str).tolist()

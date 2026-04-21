@@ -16,6 +16,7 @@ dependencies = [
     "openpyxl>=3.1.0",
     "pyarrow>=16.0.0",
     "rstr>=3.2.0",
+    "watchdog (>=6.0.0,<7.0.0)",
 ]
 
 [project.scripts]

@@ -60,6 +60,24 @@ def _is_likely_year(series: pd.Series, col_name: str) -> bool:
     return False
 
 
+def _is_integer_valued(series: pd.Series) -> bool:
+    """
+    Retourne True si la série numérique ne contient que des valeurs entières
+    (dtype int* ou float dont tous les éléments sont sans partie décimale).
+    """
+    s = series.dropna()
+    if s.empty:
+        return False
+    if pd.api.types.is_integer_dtype(series.dtype):
+        return True
+    if pd.api.types.is_float_dtype(series.dtype):
+        try:
+            return bool((s == s.apply(lambda x: float(int(x)))).all())
+        except (ValueError, OverflowError):
+            return False
+    return False
+
+
 def _to_str_clean(series: pd.Series) -> pd.Series:
     if pd.api.types.is_float_dtype(series.dtype):
         try:
@@ -85,9 +103,14 @@ def infer_column_type(series: pd.Series, col_name: str = "") -> ColType:
             return "boolean"
         if n_unique / len(s) < 0.05 and n_unique <= 20:
             return "categorical"
+        # Année → catégoriel
         if _is_likely_year(series, col_name):
             return "categorical"
+        # Identifiant explicite → texte
         if _is_likely_identifier(series, col_name):
+            return "text"
+        # Entier pur → texte (rééchantillonnage exact, pas de KDE)
+        if _is_integer_valued(series):
             return "text"
         return "numeric"
     if pd.api.types.is_object_dtype(dtype) or isinstance(dtype, pd.StringDtype):
@@ -106,6 +129,7 @@ class ColumnProfile:
     n_unique: int
     likely_identifier: bool = False
     likely_year: bool = False
+    is_integer: bool = False        # True si colonne numérique entière
     mean: float | None = None
     std: float | None = None
     min: float | None = None
@@ -127,6 +151,7 @@ def profile_dataframe(df: pd.DataFrame) -> dict[str, ColumnProfile]:
         is_num    = pd.api.types.is_numeric_dtype(series.dtype)
         likely_id = is_num and _is_likely_identifier(series, col)
         likely_yr = is_num and _is_likely_year(series, col)
+        is_int    = is_num and _is_integer_valued(series)
         col_type  = infer_column_type(series, col_name=col)
         n         = len(series)
         null_rate = series.isna().sum() / n if n > 0 else 0.0
@@ -136,6 +161,7 @@ def profile_dataframe(df: pd.DataFrame) -> dict[str, ColumnProfile]:
             name=col, col_type=col_type,
             null_rate=float(null_rate), n_unique=n_unique,
             likely_identifier=likely_id, likely_year=likely_yr,
+            is_integer=is_int,
         )
         s = series.dropna()
 
@@ -152,8 +178,12 @@ def profile_dataframe(df: pd.DataFrame) -> dict[str, ColumnProfile]:
             if likely_yr:
                 p.value_counts = {str(int(float(k))): float(v) for k, v in vc.items()}
             else:
-                p.value_counts = {str(k): float(v) for k, v in vc.items()}
+                p.value_counts = {
+                    (str(k.date()) if hasattr(k, 'date') else str(k)): float(v)
+                    for k, v in vc.items()
+                }
         elif col_type == "text":
+            # Conversion propre pour les entiers numériques requalifiés en texte
             str_series      = _to_str_clean(s)
             p.avg_length    = float(str_series.str.len().mean())
             p.sample_values = str_series.sample(min(5, len(str_series)), random_state=0).tolist()

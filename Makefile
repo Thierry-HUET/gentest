@@ -1,7 +1,9 @@
 # ==============================================================================
-# Makefile – Anonyx·Gen
+# Makefile – anonyx_Gen
 # ==============================================================================
 # Usage :
+#   make run        → lance l'application en local
+#   make install    → installe les dépendances via Poetry
 #   make release    → commit, tag, push et GitHub Release (si gh disponible)
 #   make commit     → commit simple (sans changement de version ni tag)
 #   make push       → push branche courante + tags
@@ -21,6 +23,8 @@ VERSION := $(shell cat VERSION | tr -d '[:space:]')
 BRANCH  := $(shell git rev-parse --abbrev-ref HEAD)
 PROJECT := anonyx
 ZIPNAME := $(PROJECT)-$(VERSION).zip
+ENTRY   := src/anonyx/app.py
+SRC     := $(shell pwd)/src
 
 # Détection de gh (optionnel)
 GH := $(shell command -v gh 2>/dev/null)
@@ -29,6 +33,8 @@ GH := $(shell command -v gh 2>/dev/null)
 .PHONY: help
 help:
 	@echo ""
+	@echo "  make run        Lance anonyx_Gen (poetry run streamlit)"
+	@echo "  make install    Installe les dépendances via Poetry"
 	@echo "  make release    Commit, tag v$(VERSION), push et GitHub Release"
 	@echo "  make commit     Commit de tous les fichiers modifiés (sans tag)"
 	@echo "  make push       Push branche courante + tags vers origin"
@@ -43,6 +49,19 @@ help:
 		echo "  ✓ gh détecté : $(GH)"; \
 	fi
 	@echo ""
+
+# ------------------------------------------------------------------------------
+.PHONY: install
+install:
+	@echo "→ Installation des dépendances..."
+	@poetry install
+	@echo "  Installation terminée."
+
+# ------------------------------------------------------------------------------
+.PHONY: run
+run:
+	@echo "→ Lancement de anonyx_Gen v$(VERSION)..."
+	@PYTHONPATH=$(SRC) poetry run streamlit run $(ENTRY)
 
 # ------------------------------------------------------------------------------
 .PHONY: version

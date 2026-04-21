@@ -1,0 +1,64 @@
+def _synt_cell(
+    key: str,
+    p_synt: ColumnProfile | None,
+    details: dict,
+) -> str:
+    """
+    Construit la cellule HTML pour la colonne Synthétique.
+    Priorité :
+      1. details[key] → valeur + vert/rouge si métrique évaluée
+      2. p_synt       → valeur neutre depuis le profil synthétique
+      3. "—"          → non disponible
+    """
+    NEUTRAL = "<td style='font-size:.8rem;padding:2px 6px;font-weight:500;'>{}</td>"
+    EMPTY   = "<td style='font-size:.8rem;padding:2px 6px;color:#bbb;'>—</td>"
+
+    # 1. Métrique évaluée en conformité
+    if key in details and "note" not in details[key]:
+        info    = details[key]
+        raw     = info.get("synthetic")
+        ok      = info.get("ok", True)
+        val_str = f"{raw:.4g}" if isinstance(raw, float) else (str(raw) if raw is not None else "—")
+        color   = COLOR_SUCCESS if ok else COLOR_DANGER
+        icon    = "✓" if ok else "✗"
+        return (
+            f"<td style='font-size:.8rem;padding:2px 6px;"
+            f"font-weight:500;color:{color};'>{val_str} {icon}</td>"
+        )
+
+    if p_synt is None:
+        return EMPTY
+
+    # 2. Valeur lue sur le profil synthétique (neutre, non évaluée)
+    val: str | None = None
+
+    if   key == "null_rate":  val = f"{p_synt.null_rate:.1%}"
+    elif key == "mean"   and p_synt.mean  is not None: val = _fmt(p_synt.mean)
+    elif key == "std"    and p_synt.std   is not None: val = _fmt(p_synt.std)
+    elif key == "min"    and p_synt.min   is not None: val = _fmt(p_synt.min)
+    elif key == "max"    and p_synt.max   is not None: val = _fmt(p_synt.max)
+    elif key == "q25"    and p_synt.q25   is not None: val = _fmt(p_synt.q25)
+    elif key == "q50"    and p_synt.q50   is not None: val = _fmt(p_synt.q50)
+    elif key == "q75"    and p_synt.q75   is not None: val = _fmt(p_synt.q75)
+    elif key == "avg_length" and p_synt.avg_length is not None:
+        val = f"{p_synt.avg_length:.1f} car."
+    elif key == "dt_min": val = p_synt.dt_min or "—"
+    elif key == "dt_max": val = p_synt.dt_max or "—"
+    elif key.startswith("cat__"):
+        modal = key[5:]  # retire le préfixe "cat__"
+        # Recherche directe dans value_counts synthétique
+        freq = p_synt.value_counts.get(modal)
+        if freq is None:
+            # Fallback : correspondance normalisée (strip + casse)
+            modal_norm = modal.strip().lower()
+            for k, v in p_synt.value_counts.items():
+                if str(k).strip().lower() == modal_norm:
+                    freq = v
+                    break
+        if freq is not None:
+            val = f"{freq:.1%}"
+
+    if val is not None and val not in ("—", ""):
+        return NEUTRAL.format(val)
+
+    return EMPTY

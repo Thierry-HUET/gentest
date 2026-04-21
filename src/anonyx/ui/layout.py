@@ -1,9 +1,10 @@
 """
-layout.py – Pages / sections de l'application Streamlit — Anonyx·Gen.
+layout.py – Pages / sections de l'application Streamlit — Midara (Projet Anonyx).
 """
 from __future__ import annotations
 
 import io
+import base64
 
 import pandas as pd
 import streamlit as st
@@ -12,13 +13,14 @@ from anonyx.core.loader import load_file
 from anonyx.core.profiler import profile_dataframe, ColumnProfile
 from anonyx.core.correlations import detect_sensitive_pairs, sensitive_only, CorrelationPair
 from anonyx.core.generator import generate, GeneratorConfig
-from anonyx.core.validator import build_report, ConformityReport, ColumnReport
+from anonyx.core.validator import build_report, ConformityReport, ColumnReport, CorrelationReport
 from anonyx.ui.components import (
     inject_styles,
     section_header,
     progress_badge,
     alert,
     sidebar_logo,
+    sidebar_app_logo,
     COLOR_PRIMARY,
     COLOR_SECONDARY,
     COLOR_SUCCESS,
@@ -73,7 +75,7 @@ def _report_html(report: ConformityReport) -> str:
       .badge-ok {{background:#198754;color:#fff;padding:2px 7px;border-radius:4px;font-size:.75rem;}}
       .badge-ko {{background:#c0392b;color:#fff;padding:2px 7px;border-radius:4px;font-size:.75rem;}}
     </style></head><body>
-    <h2>Anonyx·Gen — Rapport de conformité</h2>
+    <h2>Midara — Rapport de conformité</h2>
     <p>Score global : <strong>{int(report.global_score * 100)} %</strong></p>
     <h3>Colonnes</h3>
     <table><thead><tr><th>Colonne</th><th>Type</th><th>Statut</th><th>Motif KO</th></tr></thead>
@@ -83,6 +85,188 @@ def _report_html(report: ConformityReport) -> str:
     <th>Δ</th><th>Statut</th><th>Motif KO</th></tr></thead>
     <tbody>{rows_cor}</tbody></table>
     </body></html>"""
+
+
+# ---------------------------------------------------------------------------
+# Heatmap SVG des corrélations contraintes
+# ---------------------------------------------------------------------------
+def _lerp_color(t: float) -> str:
+    t = max(0.0, min(1.0, t))
+    r = int(25  + t * (192 - 25))
+    g = int(135 + t * (57  - 135))
+    b = int(84  + t * (43  - 84))
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+
+def _render_correlation_heatmap(reports: list[CorrelationReport], tolerance: float) -> None:
+    n = len(reports)
+    if n == 0:
+        return
+    cell_w = 120; cell_h = 64; pad = 8; label_h = 22
+    total_w = n * (cell_w + pad) - pad
+    total_h = cell_h + label_h + 6
+    delta_max = tolerance * 2
+    cells = []
+    for i, r in enumerate(reports):
+        x = i * (cell_w + pad)
+        t = min(1.0, r.delta / delta_max) if delta_max > 0 else (0.0 if r.compliant else 1.0)
+        color = _lerp_color(t)
+        icon  = "✓" if r.compliant else "✗"
+        label = f"{r.col_a} ↔ {r.col_b}"
+        if len(label) > 20:
+            label = label[:18] + "…"
+        cells.append(
+            f'<g transform="translate({x},0)">'
+            f'<rect x="0" y="0" width="{cell_w}" height="{cell_h}" rx="6" fill="{color}"/>'
+            f'<text x="{cell_w//2}" y="20" text-anchor="middle" font-size="14" '
+            f'font-family="Segoe UI,sans-serif" fill="#fff" font-weight="700">{icon}</text>'
+            f'<text x="{cell_w//2}" y="36" text-anchor="middle" font-size="10" '
+            f'font-family="Segoe UI,sans-serif" fill="rgba(255,255,255,0.9)">'
+            f'{r.r_original:.2f} → {r.r_synthetic:.2f}</text>'
+            f'<text x="{cell_w//2}" y="52" text-anchor="middle" font-size="10" '
+            f'font-family="Segoe UI,sans-serif" fill="rgba(255,255,255,0.8)">Δ {r.delta:.3f}</text>'
+            f'<text x="{cell_w//2}" y="{cell_h+16}" text-anchor="middle" font-size="9" '
+            f'font-family="Segoe UI,sans-serif" fill="#444">{label}</text>'
+            f'</g>'
+        )
+    svg = (
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {total_w} {total_h}" '
+        f'width="{total_w}" height="{total_h}">' + "".join(cells) + "</svg>"
+    )
+    c0, c05, c1 = _lerp_color(0.0), _lerp_color(0.5), _lerp_color(1.0)
+    html_content = (
+        f'<!DOCTYPE html><html><head><meta charset="utf-8"><style>'
+        f'body{{margin:0;padding:0;background:transparent;font-family:"Segoe UI",sans-serif;overflow:hidden;}}'
+        f'.wrap{{overflow-x:auto;padding:2px 0;}}.legend{{font-size:11px;color:#888;margin-top:6px;}}'
+        f'</style></head><body><div class="wrap">{svg}</div>'
+        f'<p class="legend">Couleur : '
+        f'<span style="color:{c0};font-weight:700;">■ conforme</span> → '
+        f'<span style="color:{c05};font-weight:700;">■ limite</span> → '
+        f'<span style="color:{c1};font-weight:700;">■ non conforme</span>'
+        f' &nbsp;·&nbsp; Rouge complet : Δ ≥ {delta_max:.3f}</p></body></html>'
+    )
+    b64 = base64.b64encode(html_content.encode("utf-8")).decode("utf-8")
+    st.iframe(f"data:text/html;base64,{b64}", height=total_h + 42, scrolling=False)
+
+
+# ---------------------------------------------------------------------------
+# Tableau comparatif Profil original / Résultat synthétique
+# ---------------------------------------------------------------------------
+def _fmt(v: object) -> str:
+    if v is None:
+        return "—"
+    if isinstance(v, float):
+        return f"{v:.4g}"
+    return str(v)
+
+
+def _profile_rows(p: ColumnProfile) -> list[tuple[str, str, str]]:
+    rows: list[tuple[str, str, str]] = [
+        ("null_rate", "Taux nuls", f"{p.null_rate:.1%}"),
+    ]
+    if p.col_type == "numeric":
+        rows += [
+            ("mean", "Moyenne",    _fmt(p.mean)),
+            ("std",  "Écart-type", _fmt(p.std)),
+            ("min",  "Min",        _fmt(p.min)),
+            ("max",  "Max",        _fmt(p.max)),
+            ("q25",  "Q25",        _fmt(p.q25)),
+            ("q50",  "Médiane",    _fmt(p.q50)),
+            ("q75",  "Q75",        _fmt(p.q75)),
+        ]
+    elif p.col_type in {"categorical", "boolean"}:
+        rows.append(("jensen_shannon", "JS divergence", "0.000"))
+        for val, freq in list(p.value_counts.items())[:3]:
+            rows.append((f"cat__{val}", f"  {val}", f"{freq:.1%}"))
+    elif p.col_type == "text":
+        rows.append(("regex_compliance", "Conformité regex", "—"))
+        rows.append(("avg_length", "Long. moy.",
+                     f"{p.avg_length:.1f} car." if p.avg_length is not None else "—"))
+    elif p.col_type == "datetime":
+        rows.append(("dt_min", "Min", p.dt_min or "—"))
+        rows.append(("dt_max", "Max", p.dt_max or "—"))
+    return rows
+
+
+def _synt_cell(key: str, p_synt: ColumnProfile | None, details: dict) -> str:
+    NEUTRAL = "<td style='font-size:.8rem;padding:2px 6px;font-weight:500;'>{}</td>"
+    EMPTY   = "<td style='font-size:.8rem;padding:2px 6px;color:#bbb;'>—</td>"
+
+    if key in details and "note" not in details[key]:
+        info    = details[key]
+        raw     = info.get("synthetic")
+        ok      = info.get("ok", True)
+        val_str = f"{raw:.4g}" if isinstance(raw, float) else (str(raw) if raw is not None else "—")
+        color   = COLOR_SUCCESS if ok else COLOR_DANGER
+        icon    = "✓" if ok else "✗"
+        return (
+            f"<td style='font-size:.8rem;padding:2px 6px;"
+            f"font-weight:500;color:{color};'>{val_str} {icon}</td>"
+        )
+
+    if p_synt is None:
+        return EMPTY
+
+    val: str | None = None
+    if   key == "null_rate":  val = f"{p_synt.null_rate:.1%}"
+    elif key == "mean"   and p_synt.mean  is not None: val = _fmt(p_synt.mean)
+    elif key == "std"    and p_synt.std   is not None: val = _fmt(p_synt.std)
+    elif key == "min"    and p_synt.min   is not None: val = _fmt(p_synt.min)
+    elif key == "max"    and p_synt.max   is not None: val = _fmt(p_synt.max)
+    elif key == "q25"    and p_synt.q25   is not None: val = _fmt(p_synt.q25)
+    elif key == "q50"    and p_synt.q50   is not None: val = _fmt(p_synt.q50)
+    elif key == "q75"    and p_synt.q75   is not None: val = _fmt(p_synt.q75)
+    elif key == "avg_length" and p_synt.avg_length is not None:
+        val = f"{p_synt.avg_length:.1f} car."
+    elif key == "dt_min": val = p_synt.dt_min or "—"
+    elif key == "dt_max": val = p_synt.dt_max or "—"
+    elif key.startswith("cat__"):
+        modal = key[5:]
+        freq = p_synt.value_counts.get(modal)
+        if freq is None:
+            modal_norm = modal.strip().lower()
+            for k, v in p_synt.value_counts.items():
+                if str(k).strip().lower() == modal_norm:
+                    freq = v
+                    break
+        if freq is not None:
+            val = f"{freq:.1%}"
+
+    if val is not None and val not in ("—", ""):
+        return NEUTRAL.format(val)
+    return EMPTY
+
+
+def _render_comparison_table(p: ColumnProfile, cr: ColumnReport | None) -> None:
+    details = cr.details if cr else {}
+    p_synt  = cr.profile_synthetic if cr else None
+    rows    = _profile_rows(p)
+    header = (
+        f"<tr style='font-size:.75rem;color:#aaa;border-bottom:1px solid #dde3e8;'>"
+        f"<th style='padding:2px 6px;font-weight:400;text-align:left;'>Métrique</th>"
+        f"<th style='padding:2px 6px;font-weight:400;text-align:left;'>Original</th>"
+        f"<th style='padding:2px 6px;font-weight:400;text-align:left;'>Synthétique</th>"
+        f"</tr>"
+    )
+    trs = []
+    for key, label, orig_str in rows:
+        sc = (
+            "<td style='font-size:.8rem;padding:2px 6px;color:#bbb;'>—</td>"
+            if cr is None
+            else _synt_cell(key, p_synt, details)
+        )
+        trs.append(
+            f"<tr>"
+            f"<td style='color:#6c757d;font-size:.8rem;padding:2px 6px;'>{label}</td>"
+            f"<td style='font-size:.8rem;padding:2px 6px;font-weight:500;'>{orig_str}</td>"
+            f"{sc}"
+            f"</tr>"
+        )
+    st.markdown(
+        f"<table style='border-collapse:collapse;width:100%;'>"
+        f"{header}{''.join(trs)}</table>",
+        unsafe_allow_html=True,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -97,7 +281,6 @@ def _col_expander_title(p: ColumnProfile, cr: ColumnReport | None) -> str:
         "datetime":    "#fd7e14",
         "unknown":     "#6c757d",
     }.get(p.col_type, COLOR_PRIMARY)
-
     parts = [
         f"<strong>{p.name}</strong>",
         f"<span style='background:{type_color};color:#fff;padding:1px 6px;"
@@ -121,79 +304,6 @@ def _col_expander_title(p: ColumnProfile, cr: ColumnReport | None) -> str:
     return "  ".join(parts)
 
 
-def _render_profile_section(p: ColumnProfile) -> None:
-    st.markdown(
-        f"<p style='font-size:.8rem;font-weight:600;color:{COLOR_SECONDARY};"
-        f"margin-bottom:4px;'>PROFIL ORIGINAL</p>",
-        unsafe_allow_html=True,
-    )
-    rows = [("Taux nuls", f"{p.null_rate:.1%}"), ("Valeurs uniques", str(p.n_unique))]
-    if p.col_type == "numeric":
-        rows += [
-            ("Moyenne", f"{p.mean:.4g}"), ("Écart-type", f"{p.std:.4g}"),
-            ("Min / Max", f"{p.min:.4g} / {p.max:.4g}"),
-            ("Q25 / Q50 / Q75", f"{p.q25:.4g} / {p.q50:.4g} / {p.q75:.4g}"),
-        ]
-    elif p.col_type in {"categorical", "boolean"}:
-        for val, freq in list(p.value_counts.items())[:3]:
-            rows.append((f"  {val}", f"{freq:.1%}"))
-    elif p.col_type == "text":
-        rows.append(("Long. moy.", f"{p.avg_length:.1f} car."))
-        if p.sample_values:
-            rows.append(("Exemples", ", ".join(p.sample_values[:3])))
-    elif p.col_type == "datetime":
-        rows += [("Min", p.dt_min or "—"), ("Max", p.dt_max or "—")]
-
-    trs = "".join(
-        f"<tr><td style='color:#6c757d;font-size:.8rem;padding:2px 6px;'>{k}</td>"
-        f"<td style='font-size:.8rem;padding:2px 6px;font-weight:500;'>{v}</td></tr>"
-        for k, v in rows
-    )
-    st.markdown(f"<table style='border-collapse:collapse;width:100%;'>{trs}</table>", unsafe_allow_html=True)
-
-
-def _render_conformity_section(cr: ColumnReport) -> None:
-    st.markdown(
-        f"<p style='font-size:.8rem;font-weight:600;color:{COLOR_SECONDARY};"
-        f"margin-bottom:4px;'>RÉSULTAT SYNTHÉTIQUE</p>",
-        unsafe_allow_html=True,
-    )
-    if not cr.details:
-        st.caption("Aucune métrique disponible.")
-        return
-    rows = []
-    for metric, info in cr.details.items():
-        if "note" in info:
-            continue
-        ok    = info.get("ok", True)
-        orig  = info.get("original")
-        synt  = info.get("synthetic")
-        if orig is not None and synt is not None:
-            label    = metric.replace("_", " ").replace("jensen shannon", "JS divergence")
-            orig_str = f"{orig:.4g}" if isinstance(orig, float) else str(orig)
-            synt_str = f"{synt:.4g}" if isinstance(synt, float) else str(synt)
-            rows.append((label, orig_str, synt_str, "✓" if ok else "✗", COLOR_SUCCESS if ok else COLOR_DANGER))
-
-    trs = "".join(
-        f"<tr>"
-        f"<td style='color:#6c757d;font-size:.8rem;padding:2px 6px;'>{lbl}</td>"
-        f"<td style='font-size:.8rem;padding:2px 6px;'>{orig}</td>"
-        f"<td style='font-size:.8rem;padding:2px 6px;'>{synt}</td>"
-        f"<td style='font-size:.8rem;padding:2px 6px;color:{color};font-weight:700;'>{icon}</td>"
-        f"</tr>"
-        for lbl, orig, synt, icon, color in rows
-    )
-    st.markdown(
-        f"<table style='border-collapse:collapse;width:100%;'>"
-        f"<tr style='font-size:.75rem;color:#aaa;'>"
-        f"<th style='padding:2px 6px;font-weight:400;'>Métrique</th>"
-        f"<th style='padding:2px 6px;font-weight:400;'>Orig.</th>"
-        f"<th style='padding:2px 6px;font-weight:400;'>Synt.</th>"
-        f"<th style='padding:2px 6px;'></th></tr>{trs}</table>",
-        unsafe_allow_html=True,
-    )
-
-
 def _render_column_expanders(
     profiles: dict[str, ColumnProfile],
     col_reports: dict[str, ColumnReport] | None,
@@ -201,7 +311,7 @@ def _render_column_expanders(
 ) -> None:
     for col, p in profiles.items():
         cr = col_reports.get(col) if col_reports else None
-        expanded = cr is not None and not cr.compliant
+        expanded    = cr is not None and not cr.compliant
         status_icon = "" if cr is None else ("✓" if cr.compliant else "✗")
         flags = []
         if p.likely_identifier:
@@ -232,14 +342,7 @@ def _render_column_expanders(
                     f"(distribution observée préservée, valeurs entières restituées).</div>",
                     unsafe_allow_html=True,
                 )
-            left, right = st.columns(2)
-            with left:
-                _render_profile_section(p)
-            with right:
-                if cr is not None:
-                    _render_conformity_section(cr)
-                else:
-                    st.caption("Générez le jeu de test pour voir les résultats.")
+            _render_comparison_table(p, cr)
 
             if p.col_type == "text":
                 st.markdown("<hr style='margin:8px 0;border-color:#dde3e8;'>", unsafe_allow_html=True)
@@ -258,50 +361,58 @@ def _render_column_expanders(
 # ---------------------------------------------------------------------------
 def run_app() -> None:
     st.set_page_config(
-        page_title="Anonyx·Gen – Générateur de jeu de test",
+        page_title="Midara – Générateur de jeu de test",
         page_icon="🧪",
         layout="wide",
     )
     inject_styles()
 
     with st.sidebar:
+        sidebar_app_logo()
         st.markdown(
-            "<h4 style='color:#fff;margin-bottom:1rem;'>🧪 Anonyx·Gen</h4>",
+            "<p style='font-size:.85rem;font-weight:600;margin-bottom:6px;'>📂 Fichier source</p>",
             unsafe_allow_html=True,
+        )
+        uploaded = st.file_uploader(
+            "CSV · XLSX · Parquet",
+            type=["csv", "xlsx", "xls", "parquet"],
+            label_visibility="visible",
         )
         st.markdown("---")
         st.markdown(
-            "<p style='font-size:.85rem;font-weight:600;margin-bottom:4px;'>Paramètres de génération</p>",
+            "<p style='font-size:.85rem;font-weight:600;margin-bottom:4px;'>Nombre de lignes à générer</p>",
             unsafe_allow_html=True,
         )
-        n_rows = st.number_input("Nombre de lignes", min_value=10, max_value=1_000_000, value=1000, step=100)
-        seed   = st.number_input("Seed (reproductibilité)", min_value=0, value=42)
+        n_rows = st.number_input(
+            "Lignes", min_value=10, max_value=1_000_000, value=1000, step=100,
+            label_visibility="collapsed",
+        )
         st.markdown("---")
-        st.markdown(
-            "<p style='font-size:.85rem;font-weight:600;margin-bottom:4px;'>Tolérances de conformité</p>",
-            unsafe_allow_html=True,
-        )
-        tolerance      = st.slider("Tolérance numérique (%)", 1, 20, 5) / 100
-        js_threshold   = st.slider("Seuil Jensen-Shannon", 0.01, 0.20, 0.05, step=0.01)
-        regex_min_rate = st.slider("Conformité regex min. (%)", 50, 100, 95) / 100
+        with st.expander("⚙ Paramètres avancés", expanded=False):
+            st.markdown(
+                "<p style='font-size:.8rem;font-weight:600;margin-bottom:4px;'>Reproductibilité</p>",
+                unsafe_allow_html=True,
+            )
+            seed = st.number_input("Seed", min_value=0, value=42)
+            st.markdown(
+                "<p style='font-size:.8rem;font-weight:600;margin:8px 0 4px;'>Tolérances de conformité</p>",
+                unsafe_allow_html=True,
+            )
+            tolerance      = st.slider("Tolérance numérique (%)", 1, 20, 5) / 100
+            js_threshold   = st.slider("Seuil Jensen-Shannon", 0.01, 0.20, 0.05, step=0.01)
+            regex_min_rate = st.slider("Conformité regex min. (%)", 50, 100, 95) / 100
         sidebar_logo()
 
     st.markdown(
-        f"<h3 style='color:{COLOR_PRIMARY};margin-bottom:.25rem;'>Anonyx·Gen</h3>"
+        f"<h3 style='color:{COLOR_PRIMARY};margin-bottom:.25rem;'>Midara</h3>"
         f"<p style='color:#6c757d;font-size:.9rem;margin-bottom:1.5rem;'>"
-        f"Générateur de jeu de test statistiquement conforme — "
-        f"Chargez un fichier tabulaire, configurez les paramètres et exportez un jeu synthétique.</p>",
+        f"Projet Anonyx · Générateur de jeu de test statistiquement conforme — "
+        f"Chargez un fichier dans la barre latérale, puis lancez la génération.</p>",
         unsafe_allow_html=True,
     )
 
-    section_header("① Chargement du fichier source", "CSV · XLSX · Parquet")
-    uploaded = st.file_uploader(
-        "Déposez un fichier ici", type=["csv", "xlsx", "xls", "parquet"],
-        label_visibility="collapsed",
-    )
-
     if uploaded is None:
-        alert("Aucun fichier chargé. Déposez un fichier CSV, XLSX ou Parquet pour commencer.")
+        alert("Déposez un fichier CSV, XLSX ou Parquet dans la barre latérale pour commencer.")
         return
 
     try:
@@ -310,11 +421,11 @@ def run_app() -> None:
         alert(f"Erreur de chargement : {e}", "danger")
         return
 
-    st.success(f"✓ Fichier chargé — {df_orig.shape[0]} lignes × {df_orig.shape[1]} colonnes")
+    st.success(f"✓ {uploaded.name} — {df_orig.shape[0]} lignes × {df_orig.shape[1]} colonnes")
     with st.expander("Aperçu des données source", expanded=False):
         st.dataframe(df_orig.head(20), width='stretch')
 
-    section_header("② Vue par colonne", "Profil · type inféré · résultat synthétique · regex")
+    section_header("① Vue par colonne", "Profil · type inféré · résultat synthétique · regex")
     profiles = profile_dataframe(df_orig)
 
     n_id = sum(1 for p in profiles.values() if p.likely_identifier)
@@ -342,7 +453,7 @@ def run_app() -> None:
 
     _render_column_expanders(profiles, col_reports, regex_map)
 
-    section_header("③ Corrélations sensibles", "|r| > 0.7 — sélectionnez les paires à contraindre")
+    section_header("② Corrélations sensibles", "|r| > 0.7 — sélectionnez les paires à contraindre")
     all_pairs  = detect_sensitive_pairs(df_orig, profiles)
     sens_pairs = sensitive_only(all_pairs)
     constrained_pairs: list[CorrelationPair] = []
@@ -360,7 +471,7 @@ def run_app() -> None:
         )
         constrained_pairs = [p for p, lbl in zip(sens_pairs, pair_labels) if lbl in selected]
 
-    section_header("④ Génération")
+    section_header("③ Génération")
     if st.button("▶ Générer le jeu de test", type="primary", width='stretch'):
         with st.spinner("Génération en cours…"):
             config = GeneratorConfig(
@@ -379,6 +490,7 @@ def run_app() -> None:
                 st.session_state["profiles"]          = profiles
                 st.session_state["constrained_pairs"] = constrained_pairs
                 st.session_state["report"]            = report
+                st.session_state["tolerance"]         = tolerance
                 st.rerun()
             except Exception as e:
                 alert(f"Erreur lors de la génération : {e}", "danger")
@@ -387,42 +499,31 @@ def run_app() -> None:
     if "report" not in st.session_state:
         return
 
-    report  = st.session_state["report"]
-    df_synt = st.session_state["df_synt"]
+    report    = st.session_state["report"]
+    df_synt   = st.session_state["df_synt"]
+    tolerance = st.session_state.get("tolerance", 0.05)
 
-    section_header("⑤ Rapport de conformité", "Score global · corrélations contraintes")
+    section_header("④ Rapport de conformité", "Score global · corrélations contraintes")
     progress_badge("Score global de conformité", report.global_score)
 
     n_ko = sum(1 for r in report.column_reports if not r.compliant)
     if n_ko:
-        alert(f"{n_ko} colonne(s) non conforme(s) — consultez le détail dans le bloc ② ci-dessus.", "warning")
+        alert(f"{n_ko} colonne(s) non conforme(s) — consultez le détail dans le bloc ① ci-dessus.", "warning")
     else:
         alert("Toutes les colonnes sont conformes.", "success")
 
     if report.correlation_reports:
-        with st.expander("Détail des corrélations contraintes", expanded=False):
-            rows_c = "".join(
-                f"<tr><td>{r.col_a}</td><td>{r.col_b}</td>"
-                f"<td>{r.r_original:.3f}</td><td>{r.r_synthetic:.3f}</td>"
-                f"<td>{r.delta:.3f}</td>"
-                f"<td><span class=\"{'gt-ok' if r.compliant else 'gt-ko'}\">"
-                f"{'✓' if r.compliant else '✗'}</span></td>"
-                f"<td style='color:{COLOR_DANGER};font-size:.8rem;'>"
-                f"{r.reason if not r.compliant else '—'}</td></tr>"
-                for r in report.correlation_reports
-            )
-            st.markdown(
-                f"<table class='gt-table'><thead>"
-                f"<tr><th>A</th><th>B</th><th>r orig.</th><th>r synt.</th>"
-                f"<th>Δ</th><th>OK</th><th>Motif KO</th></tr>"
-                f"</thead><tbody>{rows_c}</tbody></table>",
-                unsafe_allow_html=True,
-            )
+        st.markdown(
+            "<p style='font-size:.85rem;font-weight:600;margin-bottom:4px;color:#444;'>"
+            "Corrélations contraintes</p>",
+            unsafe_allow_html=True,
+        )
+        _render_correlation_heatmap(report.correlation_reports, tolerance)
 
     with st.expander("Aperçu du jeu synthétique", expanded=False):
         st.dataframe(df_synt.head(20), width='stretch')
 
-    section_header("⑥ Export")
+    section_header("⑤ Export")
     export_fmt   = st.radio("Format d'export", ["csv", "xlsx", "parquet"], horizontal=True)
     export_bytes = _to_bytes(df_synt, export_fmt)
     mime_map = {
@@ -434,12 +535,12 @@ def run_app() -> None:
     with col_a:
         st.download_button(
             label=f"⬇ Télécharger le jeu synthétique (.{export_fmt})",
-            data=export_bytes, file_name=f"anonyx_gen_synthetic.{export_fmt}",
+            data=export_bytes, file_name=f"midara_synthetic.{export_fmt}",
             mime=mime_map[export_fmt], width='stretch',
         )
     with col_b:
         st.download_button(
             label="⬇ Télécharger le rapport (.html)",
             data=_report_html(report).encode(),
-            file_name="anonyx_gen_report.html", mime="text/html", width='stretch',
+            file_name="midara_report.html", mime="text/html", width='stretch',
         )

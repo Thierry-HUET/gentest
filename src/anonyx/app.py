@@ -1,5 +1,5 @@
 """
-app.py – Point d'entrée Streamlit — Anonyx·Gen.
+app.py – Point d'entrée Streamlit — anonyx_Gen.
 
 Lancement :
     streamlit run src/anonyx/app.py

@@ -1,12 +1,11 @@
-# anonyx_Gen
-### v1.0.1 - (c) Thierry HUET / APERTO-NOTA - 04/2026
+# Midara v1.0.1
 ### Générateur de jeu de test statistiquement conforme
 
-anonyx_Gen fait partie de la suite **Anonyx**, dédiée à la protection et à la maîtrise des données.
+Midara fait partie du **Projet Anonyx**, dédié à la protection et à la maîtrise des données.
 
-| Produit | Rôle |
+| Module | Rôle |
 |---|---|
-| **anonyx_Gen** | Génération de jeux de test synthétiques (ce module) |
+| **Midara** | Génération de jeux de test synthétiques (ce module) |
 | **anonyx_Mask** | Pseudonymisation de données _(à venir)_ |
 
 ---
@@ -46,7 +45,7 @@ anonyx_Gen fait partie de la suite **Anonyx**, dédiée à la protection et à l
 ```bash
 cd gentest
 poetry install
-streamlit run src/anonyx/app.py
+make run
 ```
 
 **Via Docker :**
@@ -90,6 +89,7 @@ gentest/
 ├── .streamlit/
 │   └── config.toml
 ├── pyproject.toml
+├── Makefile
 ├── Dockerfile
 ├── docker-compose.yml
 └── VERSION
