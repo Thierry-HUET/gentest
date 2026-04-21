@@ -6,7 +6,6 @@ from __future__ import annotations
 import re
 import warnings
 from dataclasses import dataclass, field
-from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -27,7 +26,7 @@ class ColumnReport:
     compliant: bool
     details: dict
     reason: str = ""
-    profile_synthetic: Optional[ColumnProfile] = None
+    profile_synthetic: ColumnProfile | None = None
 
 
 @dataclass
@@ -216,8 +215,6 @@ def build_report(
         elif p_orig.col_type in {"categorical", "boolean"}:
             column_reports.append(_validate_categorical(p_orig, p_synt, js_threshold))
         elif p_orig.col_type == "text":
-            # Enrichissement systématique avant validation
-            _enrich_text_profile(p_synt, df_synthetic, col)
             column_reports.append(_validate_text(df_synthetic, col, regex_map, regex_compliance, p_synt))
         else:
             column_reports.append(ColumnReport(

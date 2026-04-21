@@ -14,7 +14,6 @@ import streamlit as st
 # ---------------------------------------------------------------------------
 COLOR_PRIMARY   = "#006699"
 COLOR_SECONDARY = "#004d73"
-COLOR_ACCENT    = "#33aadd"
 COLOR_LIGHT     = "#e8f4f8"
 COLOR_SUCCESS   = "#198754"
 COLOR_WARNING   = "#e6a817"
@@ -123,7 +122,7 @@ _GLOBAL_CSS = f"""
       font-weight: 600 !important;
   }}
   section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] button:hover {{
-      background-color: {COLOR_ACCENT} !important;
+      background-color: {COLOR_PRIMARY} !important;
   }}
 
   /* ---- Inputs numériques sidebar ---- */
@@ -316,14 +315,6 @@ def sidebar_logo() -> None:
 # ---------------------------------------------------------------------------
 # Composants génériques
 # ---------------------------------------------------------------------------
-def card(title: str, body: str) -> None:
-    st.markdown(
-        f'<div class="gt-card"><div class="gt-card-title">{title}</div>'
-        f'<div style="font-size:.9rem;">{body}</div></div>',
-        unsafe_allow_html=True,
-    )
-
-
 def progress_badge(label: str, score: float) -> None:
     pct = int(score * 100)
     color = COLOR_SUCCESS if pct >= 80 else (COLOR_WARNING if pct >= 60 else COLOR_DANGER)

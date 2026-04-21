@@ -1,6 +1,6 @@
 [project]
 name = "anonyx"
-version = "1.0.1"
+version = "1.0.2"
 description = "Anonyx·Gen – Générateur de jeu de test statistiquement conforme"
 authors = [
     {name = "Thierry HUET", email = "thierry.huet@aperto-nota.fr"}

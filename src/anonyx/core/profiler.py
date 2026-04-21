@@ -88,7 +88,13 @@ def _to_str_clean(series: pd.Series) -> pd.Series:
     return series.astype(str)
 
 
-def infer_column_type(series: pd.Series, col_name: str = "") -> ColType:
+def infer_column_type(
+    series: pd.Series,
+    col_name: str = "",
+    likely_identifier: bool | None = None,
+    likely_year: bool | None = None,
+    is_integer: bool | None = None,
+) -> ColType:
     s = series.dropna()
     if s.empty:
         return "unknown"
@@ -104,13 +110,16 @@ def infer_column_type(series: pd.Series, col_name: str = "") -> ColType:
         if n_unique / len(s) < 0.05 and n_unique <= 20:
             return "categorical"
         # Année → catégoriel
-        if _is_likely_year(series, col_name):
+        _likely_yr = likely_year if likely_year is not None else _is_likely_year(series, col_name)
+        if _likely_yr:
             return "categorical"
         # Identifiant explicite → texte
-        if _is_likely_identifier(series, col_name):
+        _likely_id = likely_identifier if likely_identifier is not None else _is_likely_identifier(series, col_name)
+        if _likely_id:
             return "text"
         # Entier pur → texte (rééchantillonnage exact, pas de KDE)
-        if _is_integer_valued(series):
+        _is_int = is_integer if is_integer is not None else _is_integer_valued(series)
+        if _is_int:
             return "text"
         return "numeric"
     if pd.api.types.is_object_dtype(dtype) or isinstance(dtype, pd.StringDtype):
@@ -152,7 +161,10 @@ def profile_dataframe(df: pd.DataFrame) -> dict[str, ColumnProfile]:
         likely_id = is_num and _is_likely_identifier(series, col)
         likely_yr = is_num and _is_likely_year(series, col)
         is_int    = is_num and _is_integer_valued(series)
-        col_type  = infer_column_type(series, col_name=col)
+        col_type  = infer_column_type(
+            series, col_name=col,
+            likely_identifier=likely_id, likely_year=likely_yr, is_integer=is_int,
+        )
         n         = len(series)
         null_rate = series.isna().sum() / n if n > 0 else 0.0
         n_unique  = int(series.nunique(dropna=True))

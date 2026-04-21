@@ -425,23 +425,7 @@ def run_app() -> None:
     with st.expander("Aperçu des données source", expanded=False):
         st.dataframe(df_orig.head(20), width='stretch')
 
-    section_header("① Vue par colonne", "Profil · type inféré · résultat synthétique · regex")
     profiles = profile_dataframe(df_orig)
-
-    n_id = sum(1 for p in profiles.values() if p.likely_identifier)
-    n_yr = sum(1 for p in profiles.values() if p.likely_year)
-    if n_id:
-        alert(
-            f"⚠ {n_id} colonne(s) requalifiée(s) en <strong>texte</strong> (identifiant probable) : "
-            + ", ".join(f"<strong>{p.name}</strong>" for p in profiles.values() if p.likely_identifier),
-            "warning",
-        )
-    if n_yr:
-        alert(
-            f"📅 {n_yr} colonne(s) requalifiée(s) en <strong>catégoriel</strong> (année probable) : "
-            + ", ".join(f"<strong>{p.name}</strong>" for p in profiles.values() if p.likely_year),
-            "info",
-        )
 
     if "regex_map" not in st.session_state:
         st.session_state["regex_map"] = {}
@@ -451,7 +435,29 @@ def run_app() -> None:
     if "report" in st.session_state:
         col_reports = {r.name: r for r in st.session_state["report"].column_reports}
 
-    _render_column_expanders(profiles, col_reports, regex_map)
+    n_id   = sum(1 for p in profiles.values() if p.likely_identifier)
+    n_yr   = sum(1 for p in profiles.values() if p.likely_year)
+    n_ko   = sum(1 for cr in (col_reports or {}).values() if not cr.compliant)
+    n_cols = len(profiles)
+    status = f" · \u26a0 {n_ko} KO" if n_ko else (" · \u2713 tout OK" if col_reports else "")
+    accordion_label = f"\u2460 Vue par colonne \u2014 {n_cols} colonnes{status}"
+
+    section_header("① Vue par colonne", f"Profil · type inféré · résultat synthétique · regex — {n_cols} colonnes{status}")
+
+    with st.expander("Détail des colonnes", expanded=True):
+        if n_id:
+            alert(
+                f"\u26a0 {n_id} colonne(s) requalifi\u00e9e(s) en <strong>texte</strong> (identifiant probable) : "
+                + ", ".join(f"<strong>{p.name}</strong>" for p in profiles.values() if p.likely_identifier),
+                "warning",
+            )
+        if n_yr:
+            alert(
+                f"\U0001f4c5 {n_yr} colonne(s) requalifi\u00e9e(s) en <strong>cat\u00e9goriel</strong> (ann\u00e9e probable) : "
+                + ", ".join(f"<strong>{p.name}</strong>" for p in profiles.values() if p.likely_year),
+                "info",
+            )
+        _render_column_expanders(profiles, col_reports, regex_map)
 
     section_header("② Corrélations sensibles", "|r| > 0.7 — sélectionnez les paires à contraindre")
     all_pairs  = detect_sensitive_pairs(df_orig, profiles)
@@ -503,18 +509,70 @@ def run_app() -> None:
     df_synt   = st.session_state["df_synt"]
     tolerance = st.session_state.get("tolerance", 0.05)
 
-    section_header("④ Rapport de conformité", "Score global · corrélations contraintes")
+    # ── ④ Qualité du jeu de test ─────────────────────────────────────────────
+    section_header("④ Qualité du jeu de test", "Score de conformité global · colonnes · corrélations")
+
+    n_ko_rep = sum(1 for r in report.column_reports if not r.compliant)
+    n_ok_rep = len(report.column_reports) - n_ko_rep
+    n_cor_ko = sum(1 for r in report.correlation_reports if not r.compliant)
+    n_cor_ok = len(report.correlation_reports) - n_cor_ko
+
     progress_badge("Score global de conformité", report.global_score)
 
-    n_ko = sum(1 for r in report.column_reports if not r.compliant)
-    if n_ko:
-        alert(f"{n_ko} colonne(s) non conforme(s) — consultez le détail dans le bloc ① ci-dessus.", "warning")
+    c1, c2, c3, c4 = st.columns(4)
+
+    def _metric_card(col, label: str, value: str, sub: str, ok: bool) -> None:
+        color = COLOR_SUCCESS if ok else COLOR_DANGER
+        col.markdown(
+            f"<div style='background:#fff;border-left:4px solid {color};border-radius:6px;"
+            f"padding:10px 14px;box-shadow:0 1px 4px rgba(0,0,0,.06);margin-bottom:4px;'>"
+            f"<div style='font-size:.75rem;color:#6c757d;margin-bottom:2px;'>{label}</div>"
+            f"<div style='font-size:1.35rem;font-weight:700;color:{color};'>{value}</div>"
+            f"<div style='font-size:.75rem;color:#aaa;margin-top:2px;'>{sub}</div>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
+    _metric_card(c1, "Score global",
+                 f"{int(report.global_score * 100)} %",
+                 "conformité synthétique", report.global_score >= 0.8)
+    _metric_card(c2, "Colonnes conformes",
+                 f"{n_ok_rep} / {len(report.column_reports)}",
+                 f"{n_ko_rep} KO" if n_ko_rep else "toutes OK", n_ko_rep == 0)
+    _metric_card(c3, "Corrélations OK",
+                 f"{n_cor_ok} / {len(report.correlation_reports)}" if report.correlation_reports else "—",
+                 f"{n_cor_ko} hors tolérance" if n_cor_ko else ("toutes OK" if report.correlation_reports else "aucune contrainte"),
+                 n_cor_ko == 0)
+    _metric_card(c4, "Lignes générées",
+                 f"{len(df_synt):,}".replace(",", " "),
+                 "jeu synthétique", True)
+
+    st.markdown("<div style='margin-top:10px;'></div>", unsafe_allow_html=True)
+
+    if n_ko_rep:
+        alert(f"{n_ko_rep} colonne(s) non conforme(s) — détail dans le bloc ① ci-dessus.", "warning")
+        ko_rows = "".join(
+            f"<tr><td style='padding:5px 10px;font-size:.85rem;'>{r.name}</td>"
+            f"<td style='padding:5px 10px;'>"
+            f"<span style='background:#6f42c1;color:#fff;padding:1px 6px;border-radius:3px;font-size:.72rem;'>{r.col_type}</span></td>"
+            f"<td style='padding:5px 10px;font-size:.85rem;color:{COLOR_DANGER};'>{r.reason}</td></tr>"
+            for r in report.column_reports if not r.compliant
+        )
+        st.markdown(
+            f"<table style='border-collapse:collapse;width:100%;margin-top:6px;'>"
+            f"<thead><tr>"
+            f"<th style='background:{COLOR_PRIMARY};color:#fff;padding:6px 10px;font-size:.8rem;text-align:left;'>Colonne</th>"
+            f"<th style='background:{COLOR_PRIMARY};color:#fff;padding:6px 10px;font-size:.8rem;text-align:left;'>Type</th>"
+            f"<th style='background:{COLOR_PRIMARY};color:#fff;padding:6px 10px;font-size:.8rem;text-align:left;'>Motif KO</th>"
+            f"</tr></thead><tbody>{ko_rows}</tbody></table>",
+            unsafe_allow_html=True,
+        )
     else:
         alert("Toutes les colonnes sont conformes.", "success")
 
     if report.correlation_reports:
         st.markdown(
-            "<p style='font-size:.85rem;font-weight:600;margin-bottom:4px;color:#444;'>"
+            "<p style='font-size:.85rem;font-weight:600;margin-top:14px;margin-bottom:4px;color:#444;'>"
             "Corrélations contraintes</p>",
             unsafe_allow_html=True,
         )
@@ -523,7 +581,21 @@ def run_app() -> None:
     with st.expander("Aperçu du jeu synthétique", expanded=False):
         st.dataframe(df_synt.head(20), width='stretch')
 
-    section_header("⑤ Export")
+    # ── ⑤ Rapport détaillé ───────────────────────────────────────────────────
+    section_header("⑤ Rapport détaillé", "Conformité colonne par colonne")
+
+    with st.expander("Voir le rapport complet", expanded=False):
+        progress_badge("Score global", report.global_score)
+        for r in report.column_reports:
+            ok_icon = f'<b style="color:{COLOR_SUCCESS}">✓</b>' if r.compliant else f'<b style="color:{COLOR_DANGER}">✗</b>'
+            reason  = f' &nbsp;— <span style="color:{COLOR_DANGER};font-size:.8rem;">{r.reason}</span>' if not r.compliant else ""
+            st.markdown(
+                f"<span style='font-size:.85rem;'>{ok_icon} &nbsp;<strong>{r.name}</strong>"
+                f" &nbsp;<span style='color:#6c757d;font-size:.8rem;'>[{r.col_type}]</span>{reason}</span>",
+                unsafe_allow_html=True,
+            )
+
+    section_header("⑥ Export")
     export_fmt   = st.radio("Format d'export", ["csv", "xlsx", "parquet"], horizontal=True)
     export_bytes = _to_bytes(df_synt, export_fmt)
     mime_map = {
