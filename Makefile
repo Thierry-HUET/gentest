@@ -2,42 +2,46 @@
 # Makefile – Anonyx·Gen
 # ==============================================================================
 # Usage :
-#   make release    → commit, tag et push avec la version du fichier VERSION
+#   make release    → commit, tag, push et GitHub Release (si gh disponible)
 #   make commit     → commit simple (sans changement de version ni tag)
 #   make push       → push branche courante + tags
 #   make status     → affiche l'état git
 #   make version    → affiche la version courante
 #
-# Prérequis pour make release avec GitHub Release : gh (GitHub CLI) installé
-# Pour changer de version : éditer le fichier VERSION, puis lancer make release
+# GitHub Release (make release) nécessite gh (GitHub CLI).
+# Si gh n'est pas installé, le tag et le push sont effectués mais la release
+# GitHub est ignorée avec un avertissement.
+# Installation : https://cli.github.com
 # ==============================================================================
 
 .DEFAULT_GOAL := help
 
-# Horodatage ISO 8601 local
-DATE := $(shell date '+%Y-%m-%d %H:%M:%S')
-
-# Version lue depuis le fichier VERSION
+DATE    := $(shell date '+%Y-%m-%d %H:%M:%S')
 VERSION := $(shell cat VERSION | tr -d '[:space:]')
-
-# Branche courante
-BRANCH := $(shell git rev-parse --abbrev-ref HEAD)
-
-# Nom du projet et archive
+BRANCH  := $(shell git rev-parse --abbrev-ref HEAD)
 PROJECT := anonyx
 ZIPNAME := $(PROJECT)-$(VERSION).zip
+
+# Détection de gh (optionnel)
+GH := $(shell command -v gh 2>/dev/null)
 
 # ------------------------------------------------------------------------------
 .PHONY: help
 help:
 	@echo ""
-	@echo "  make release    Commit, tag v$(VERSION) et push  (version lue depuis VERSION)"
+	@echo "  make release    Commit, tag v$(VERSION), push et GitHub Release"
 	@echo "  make commit     Commit de tous les fichiers modifiés (sans tag)"
 	@echo "  make push       Push branche courante + tags vers origin"
 	@echo "  make status     État du dépôt git"
 	@echo "  make version    Affiche la version courante"
 	@echo ""
 	@echo "  → Pour changer de version : éditer le fichier VERSION puis make release"
+	@if [ -z "$(GH)" ]; then \
+		echo "  ⚠ gh (GitHub CLI) non trouvé — la publication GitHub sera ignorée."; \
+		echo "    Installation : https://cli.github.com"; \
+	else \
+		echo "  ✓ gh détecté : $(GH)"; \
+	fi
 	@echo ""
 
 # ------------------------------------------------------------------------------
@@ -71,7 +75,7 @@ push:
 .PHONY: release
 release:
 	@echo "→ Version : $(VERSION)"
-	@# Synchronisation de pyproject.toml avec le fichier VERSION
+	@# Synchronisation de pyproject.toml
 	@CURRENT=$$(grep '^version' pyproject.toml | sed 's/version = "\(.*\)"/\1/'); \
 	 sed -i.bak "s/^version = \"$$CURRENT\"/version = \"$(VERSION)\"/" pyproject.toml \
 	 && rm -f pyproject.toml.bak
@@ -90,21 +94,26 @@ release:
 	fi
 	@# Push branche + tags
 	@git push origin $(BRANCH) --tags
-	@# Génération de l'asset ZIP
-	@echo "→ Génération de l'asset ZIP..."
-	@git archive --format=zip --output "$(ZIPNAME)" "v$(VERSION)"
-	@echo "  Asset créé : $(ZIPNAME)"
-	@# Publication GitHub Release via gh CLI
-	@echo "→ Publication de la GitHub Release..."
-	@if gh release view "v$(VERSION)" >/dev/null 2>&1; then \
-		echo "  Release v$(VERSION) existe déjà — remplacement de l'asset..."; \
-		gh release upload "v$(VERSION)" "$(ZIPNAME)" --clobber; \
+	@echo "  Push terminé."
+	@# GitHub Release (optionnelle — nécessite gh)
+	@if [ -z "$(GH)" ]; then \
+		echo ""; \
+		echo "  ⚠ gh non disponible — GitHub Release ignorée."; \
+		echo "    Pour publier : installer gh (https://cli.github.com) puis relancer make release."; \
 	else \
-		echo "  Création de la release v$(VERSION)..."; \
-		gh release create "v$(VERSION)" "$(ZIPNAME)" \
-			--title "v$(VERSION)" \
-			--notes "Release v$(VERSION)" \
-			--target "$(BRANCH)"; \
+		echo "→ Génération de l'asset ZIP..."; \
+		git archive --format=zip --output "$(ZIPNAME)" "v$(VERSION)"; \
+		echo "  Asset créé : $(ZIPNAME)"; \
+		echo "→ Publication de la GitHub Release..."; \
+		if gh release view "v$(VERSION)" >/dev/null 2>&1; then \
+			echo "  Release v$(VERSION) existe déjà — remplacement de l'asset..."; \
+			gh release upload "v$(VERSION)" "$(ZIPNAME)" --clobber; \
+		else \
+			gh release create "v$(VERSION)" "$(ZIPNAME)" \
+				--title "v$(VERSION)" \
+				--notes "Release v$(VERSION)" \
+				--target "$(BRANCH)"; \
+		fi; \
+		echo ""; \
+		echo "  ✓ Release v$(VERSION) publiée avec asset $(ZIPNAME)."; \
 	fi
-	@echo ""
-	@echo "  ✓ Release v$(VERSION) publiée avec asset $(ZIPNAME)."
