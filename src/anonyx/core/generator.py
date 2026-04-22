@@ -12,6 +12,7 @@ Stratégies par type :
 from __future__ import annotations
 
 import random
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -22,6 +23,9 @@ from scipy import stats
 
 from anonyx.core.profiler import ColumnProfile
 from anonyx.core.correlations import CorrelationPair
+from anonyx.core.logger import get_logger
+
+log = get_logger(__name__)
 
 
 @dataclass
@@ -105,9 +109,14 @@ def generate(
     profiles: dict[str, ColumnProfile],
     config: GeneratorConfig,
 ) -> pd.DataFrame:
+    t0     = time.perf_counter()
     rng_np = np.random.default_rng(config.seed)
     rng_py = random.Random(config.seed)
-    n = config.n_rows
+    n      = config.n_rows
+    log.info(
+        "generate : démarrage — %d lignes, seed=%d, %d paire(s) contrainte(s)",
+        n, config.seed, len(config.constrained_pairs),
+    )
 
     # --- 1. Colonnes numériques : KDE float pur ---------------------------
     # Les entiers ont été requalifiés en "text" dans profiler.py
@@ -157,6 +166,7 @@ def generate(
                     quantile_indices = np.clip((u * len(src)).astype(int), 0, len(src) - 1)
                     numeric_data[col] = src[quantile_indices]
             except np.linalg.LinAlgError:
+                log.warning("generate : copule Cholesky échouée, corrélations ignorées")
                 pass
 
     # --- 3. Construction du DataFrame -------------------------------------
@@ -216,4 +226,9 @@ def generate(
             src_values = df_original[col].tolist()
             out[col] = [rng_py.choice(src_values) for _ in range(n)]
 
-    return pd.DataFrame(out, columns=df_original.columns)
+    result = pd.DataFrame(out, columns=df_original.columns)
+    log.info(
+        "generate : terminé en %.2fs — %d lignes × %d colonnes",
+        time.perf_counter() - t0, result.shape[0], result.shape[1],
+    )
+    return result

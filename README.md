@@ -14,8 +14,8 @@ Midara fait partie du **Projet Anonyx**, dédié à la protection et à la maît
 
 - Chargement de fichiers : CSV (détection automatique du séparateur), XLSX, Parquet
 - Inférence automatique du type de colonne avec heuristiques :
-  - **Identifiants** (MMSI, codes, index…) → traitement texte, rééchantillonnage propre sans `.0`
-  - **Années** (construction, fabrication…) → traitement catégoriel, valeurs entières restituées
+  - **Identifiants** → traitement texte, rééchantillonnage propre sans `.0`
+  - **Années**  → traitement catégoriel, valeurs entières restituées
   - **Dates catégorielles** → normalisation des clés `value_counts` via `str(k.date())`
 - Génération synthétique :
   - Numérique : KDE + clip sur [min, max], tolérance ±5 % (configurable)

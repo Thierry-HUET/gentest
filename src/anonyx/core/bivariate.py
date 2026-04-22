@@ -19,6 +19,7 @@ Pipeline :
 from __future__ import annotations
 
 import warnings
+import time
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -27,6 +28,9 @@ from scipy import stats
 from scipy.stats import chi2_contingency
 
 from anonyx.core.profiler import ColumnProfile
+from anonyx.core.logger import get_logger
+
+log = get_logger(__name__)
 
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 warnings.filterwarnings("ignore", category=stats.ConstantInputWarning)
@@ -207,6 +211,9 @@ def compute_bivariate(
     sur le jeu synthétique), filtre les colonnes par décomposition spectrale
     et retourne la BivariateResult.
     """
+    t0 = time.perf_counter()
+    mode = "orig+synt" if df_synt is not None else "orig"
+
     # Colonnes éligibles (numeric, categorical, boolean)
     eligible = [
         col for col, p in profiles.items()
@@ -216,6 +223,10 @@ def compute_bivariate(
     ]
 
     if len(eligible) < 2:
+        log.warning(
+            "compute_bivariate [%s] : seulement %d colonne(s) éligible(s), heatmap ignorée",
+            mode, len(eligible),
+        )
         return BivariateResult(columns=eligible, matrix_orig=np.eye(max(len(eligible), 1)))
 
     col_types = {col: profiles[col].col_type for col in eligible}
@@ -227,16 +238,30 @@ def compute_bivariate(
     kept_cols, kept_idx, eigvals, n_sig = _spectral_filter(
         eligible, M_orig, kaiser_threshold
     )
-
     M_orig_f = M_orig[np.ix_(kept_idx, kept_idx)]
+
+    log.info(
+        "compute_bivariate [%s] : %d/%d colonnes retenues, %d VP>1, en %.2fs",
+        mode, len(kept_cols), len(eligible), n_sig, time.perf_counter() - t0,
+    )
 
     # Matrice synthétique (si disponible)
     M_synt_f: np.ndarray | None = None
     if df_synt is not None:
+        t1 = time.perf_counter()
         synt_eligible = [c for c in kept_cols if c in df_synt.columns]
         if len(synt_eligible) == len(kept_cols):
             M_synt_full, _ = _build_matrix(df_synt, kept_cols, col_types)
             M_synt_f = M_synt_full
+            log.info(
+                "compute_bivariate [synt] : matrice %dx%d en %.2fs",
+                len(kept_cols), len(kept_cols), time.perf_counter() - t1,
+            )
+        else:
+            log.warning(
+                "compute_bivariate [synt] : %d colonne(s) manquante(s) dans le jeu synthétique",
+                len(kept_cols) - len(synt_eligible),
+            )
 
     return BivariateResult(
         columns=kept_cols,

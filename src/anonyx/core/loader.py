@@ -4,10 +4,14 @@ loader.py – Chargement de fichiers tabulaires (CSV, XLSX, Parquet).
 from __future__ import annotations
 
 import io
+import time
 from pathlib import Path
 
 import pandas as pd
 
+from anonyx.core.logger import get_logger
+
+log = get_logger(__name__)
 
 SUPPORTED_EXTENSIONS = {".csv", ".xlsx", ".xls", ".parquet"}
 
@@ -41,21 +45,31 @@ def load_file(source: str | Path | io.BytesIO, filename: str = "") -> pd.DataFra
     ext = Path(name).suffix.lower()
 
     if ext not in SUPPORTED_EXTENSIONS:
-        raise ValueError(
-            f"Format non supporté : '{ext}'. "
-            f"Formats acceptés : {', '.join(sorted(SUPPORTED_EXTENSIONS))}"
-        )
+        msg = f"Format non supporté : '{ext}'. Formats acceptés : {', '.join(sorted(SUPPORTED_EXTENSIONS))}"
+        log.error("load_file : %s", msg)
+        raise ValueError(msg)
 
-    if ext == ".csv":
-        sep = _detect_csv_separator(source)
-        if isinstance(source, io.BytesIO):
-            source.seek(0)
-        return pd.read_csv(source, sep=sep)
+    t0 = time.perf_counter()
+    try:
+        if ext == ".csv":
+            sep = _detect_csv_separator(source)
+            if isinstance(source, io.BytesIO):
+                source.seek(0)
+            df = pd.read_csv(source, sep=sep)
+        elif ext in {".xlsx", ".xls"}:
+            df = pd.read_excel(source)
+        elif ext == ".parquet":
+            df = pd.read_parquet(source)
+        else:
+            raise ValueError(f"Format non supporté : '{ext}'")
+    except Exception:
+        log.error("load_file : échec chargement '%s'", name, exc_info=True)
+        raise
 
-    if ext in {".xlsx", ".xls"}:
-        return pd.read_excel(source)
-
-    if ext == ".parquet":
-        return pd.read_parquet(source)
-
-    raise ValueError(f"Format non supporté : '{ext}'")
+    elapsed = time.perf_counter() - t0
+    log.info(
+        "load_file : '%s' chargé en %.2fs — %d lignes × %d colonnes (sep='%s')",
+        name, elapsed, df.shape[0], df.shape[1],
+        sep if ext == ".csv" else "—",
+    )
+    return df

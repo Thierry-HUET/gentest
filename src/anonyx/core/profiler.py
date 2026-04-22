@@ -3,11 +3,16 @@ profiler.py – Inférence de type et calcul de statistiques par colonne.
 """
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
 import pandas as pd
+
+from anonyx.core.logger import get_logger
+
+log = get_logger(__name__)
 
 
 ColType = str  # "numeric" | "categorical" | "boolean" | "text" | "datetime" | "unknown"
@@ -154,7 +159,9 @@ class ColumnProfile:
 
 
 def profile_dataframe(df: pd.DataFrame) -> dict[str, ColumnProfile]:
+    t0       = time.perf_counter()
     profiles: dict[str, ColumnProfile] = {}
+    type_counts: dict[str, int] = {}
     for col in df.columns:
         series    = df[col]
         is_num    = pd.api.types.is_numeric_dtype(series.dtype)
@@ -187,11 +194,17 @@ def profile_dataframe(df: pd.DataFrame) -> dict[str, ColumnProfile]:
             p.q75  = float(s.quantile(0.75))
         elif col_type in {"categorical", "boolean"}:
             vc = s.value_counts(normalize=True)
+            # Ramener les fréquences au total des lignes (nulls inclus)
+            # ex: FR=58.6% sur 0.1% non-nuls ⇒ FR=0.06% du total
+            non_null_rate = 1.0 - float(null_rate)
             if likely_yr:
-                p.value_counts = {str(int(float(k))): float(v) for k, v in vc.items()}
+                p.value_counts = {
+                    str(int(float(k))): float(v) * non_null_rate
+                    for k, v in vc.items()
+                }
             else:
                 p.value_counts = {
-                    (str(k.date()) if hasattr(k, 'date') else str(k)): float(v)
+                    (str(k.date()) if hasattr(k, 'date') else str(k)): float(v) * non_null_rate
                     for k, v in vc.items()
                 }
         elif col_type == "text":
@@ -204,4 +217,12 @@ def profile_dataframe(df: pd.DataFrame) -> dict[str, ColumnProfile]:
             p.dt_max = str(s.max())
 
         profiles[col] = p
+        type_counts[col_type] = type_counts.get(col_type, 0) + 1
+
+    elapsed = time.perf_counter() - t0
+    summary = ", ".join(f"{t}:{n}" for t, n in sorted(type_counts.items()))
+    log.info(
+        "profile_dataframe : %d colonnes en %.2fs — types [%s]",
+        len(profiles), elapsed, summary,
+    )
     return profiles
